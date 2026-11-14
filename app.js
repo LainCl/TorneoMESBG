@@ -402,8 +402,8 @@
             isApplyingRemoteUpdate = false;
             showToast(
               isAdminMode
-                ? `👑 Conectado como Host a tu torneo "${state.tournamentName}" (ID: ${code}).`
-                : `👁️ Conectado como Jugador al torneo "${state.tournamentName}" (ID: ${code}).`
+                ? `Conectado como Organizador a tu torneo "${state.tournamentName}" (ID: ${code}).`
+                : `Conectado como Jugador al torneo "${state.tournamentName}" (ID: ${code}).`
             );
             return;
           }
@@ -427,8 +427,8 @@
       isApplyingRemoteUpdate = false;
       showToast(
         isAdminMode
-          ? `👑 Torneo "${state.tournamentName}" (ID: ${code}) cargado en Modo Host.`
-          : `👁️ Torneo "${state.tournamentName}" (ID: ${code}) cargado en Vista Jugador.`
+          ? `Torneo "${state.tournamentName}" (ID: ${code}) cargado como Organizador.`
+          : `Torneo "${state.tournamentName}" (ID: ${code}) cargado como Jugador.`
       );
       return;
     }
@@ -489,14 +489,7 @@
     document.body.classList.toggle('spectator-mode', !isAdminMode);
     const btn = document.getElementById('btnToggleAdminMode');
     if (btn) {
-      const iOwnThisRoom = isRoomOwnedByMe(state.roomCode);
-      if (isAdminMode) {
-        btn.textContent = '👑 Host del Torneo';
-      } else if (iOwnThisRoom) {
-        btn.textContent = '👁️ Vista Jugador (Host)';
-      } else {
-        btn.textContent = '👁️ Vista Jugador';
-      }
+      btn.textContent = isAdminMode ? 'Organizador' : 'Jugador';
       btn.classList.toggle('is-admin', isAdminMode);
     }
 
@@ -2215,7 +2208,7 @@
   function promptCreateNewRoom() {
     openConfirmModal(
       'Crear Nuevo Torneo (Nuevo ID)',
-      '¿Deseas levantar un nuevo torneo con un código ID nuevo? Quedarás automáticamente como Host (Organizador) de la nueva sala y el torneo anterior seguirá guardado bajo su propio código.',
+      '¿Deseas levantar un nuevo torneo con un código ID nuevo? Quedarás automáticamente como Organizador de la nueva sala y el torneo anterior seguirá guardado bajo su propio código.',
       '➕ Crear Nuevo Torneo',
       () => {
         const newCode = generateRoomCode();
@@ -2233,7 +2226,7 @@
         applyRoleModeUI();
         switchTab('setup');
         renderAll();
-        showToast(`👑 Nueva sala creada con el código ${newCode}. ¡Eres el Host!`);
+        showToast(`Nueva sala creada con el código ${newCode}. Rol activo: Organizador.`);
       }
     );
   }
@@ -2243,28 +2236,28 @@
     const iOwnThisRoom = isRoomOwnedByMe(state.roomCode);
 
     openModal(
-      'Sala de Torneo (Estilo Companion)',
+      'Sala de Torneo',
       `
         <h4>Código de Sala Activo: <span style="color:var(--gold-bright); letter-spacing:0.12em;">${escapeHtml(state.roomCode || '------')}</span></h4>
         <p style="margin-bottom:14px;">
           Tu rol en este torneo: <strong style="color:var(--gold-bright);">${
             isAdminMode
-              ? '👑 Host del Torneo (Puedes configurar, emparejar y editar resultados)'
+              ? 'Organizador (Puedes configurar, emparejar y editar resultados)'
               : iOwnThisRoom
-              ? '👁️ Vista Jugador (Previsualizando tu propio torneo)'
-              : '👁️ Vista Jugador (Siguiendo en vivo Rondas, Mesas y Podio)'
+              ? 'Jugador (Previsualizando tu propio torneo)'
+              : 'Jugador (Siguiendo en vivo Rondas, Mesas y Podio)'
           }</strong>
         </p>
 
         <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:18px;">
           ${
             iOwnThisRoom && isAdminMode
-              ? `<button type="button" class="btn-elven-outline btn-sm" id="btnLockToSpectator">👁️ Previsualizar como Jugador</button>`
+              ? `<button type="button" class="btn-elven-outline btn-sm" id="btnLockToSpectator">Cambiar a Jugador</button>`
               : ''
           }
           ${
             iOwnThisRoom && !isAdminMode
-              ? `<button type="button" class="btn-gold-cta btn-sm" id="btnReturnToHost">👑 Volver a Modo Host</button>`
+              ? `<button type="button" class="btn-gold-cta btn-sm" id="btnReturnToHost">Volver a Organizador</button>`
               : ''
           }
           <button type="button" class="btn-gold-cta btn-sm" id="btnCreateOwnTournamentFromModal">➕ Crear Nuevo Torneo (Nuevo ID)</button>
@@ -2286,7 +2279,7 @@
         isAdminMode = true;
         applyRoleModeUI();
         closeModal();
-        showToast('👑 Modo Host restaurado.');
+        showToast('Modo Organizador activado.');
       });
     }
 
@@ -2296,7 +2289,7 @@
         isAdminMode = false;
         applyRoleModeUI();
         closeModal();
-        showToast('👁️ Previsualizando como Jugador (solo lectura).');
+        showToast('Modo Jugador activado (solo lectura).');
       });
     }
 
