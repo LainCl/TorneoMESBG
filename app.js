@@ -115,6 +115,8 @@
     s.tablesPerTeam = Math.max(1, Number(s.tablesPerTeam) || 4);
     s.activeRound = Math.max(1, Number(s.activeRound) || 1);
     s.tournamentFinished = !!s.tournamentFinished;
+    s.votingPaintOpen = !!s.votingPaintOpen;
+    s.votingFairPlayOpen = !!s.votingFairPlayOpen;
     s.votes = s.votes && typeof s.votes === 'object' ? s.votes : {};
     s.players = Array.isArray(s.players) ? s.players : [];
     s.teams = Array.isArray(s.teams)
@@ -240,6 +242,8 @@
       tablesPerTeam,
       activeRound: 1,
       tournamentFinished: false,
+      votingPaintOpen: false,
+      votingFairPlayOpen: false,
       votes: {},
       players: [],
       teams: createDefaultTeams(teamCount, membersPerTeam),
@@ -1115,6 +1119,10 @@
     if (roomCodeEl) {
       roomCodeEl.textContent = state.roomCode || '------';
     }
+    const minBadgeEl = document.getElementById('minimizedRoomCodeBadge');
+    if (minBadgeEl) {
+      minBadgeEl.textContent = state.roomCode || '------';
+    }
     document.getElementById('statActivePlayers').textContent = `${activeCount} / ${totalCount}`;
     document.getElementById('statRounds').textContent = `${completedRounds} / ${state.totalRounds}`;
     document.getElementById('statTables').textContent = String(state.totalTables);
@@ -1477,6 +1485,7 @@
         : `Ronda ${state.activeRound} — Sin emparejamientos generados aún. Presiona "Emparejar Rondas"`;
 
     updateRoundTimerUI();
+    updateVotingControlUI();
 
     const btnFinalizeFromRounds = document.getElementById('btnFinalizeTournamentFromRounds');
     if (btnFinalizeFromRounds) {
@@ -1557,16 +1566,10 @@
             <thead>
               <tr>
                 <th class="text-left">OPONENTES</th>
-                <th>PINTURA S/N</th>
-                <th>ATRASO</th>
-                <th>PENALIZ.</th>
-                <th>RENDICIÓN</th>
-                <th>AB. PARTIDA</th>
-                <th>AB. TORNEO</th>
                 <th>RESULTADO</th>
                 <th>PT TORNEO</th>
                 <th>PV ESCENARIO</th>
-                <th>DIF. PV</th>
+                <th class="text-left">DIF. PUNTOS</th>
               </tr>
             </thead>
             <tbody>
@@ -1588,7 +1591,10 @@
     });
 
     bindMatchCardEvents(container, currentRoundObj);
+    updateVotingControlUI();
   }
+
+  const openPenaltyMenus = new Set();
 
   function renderPlayerMatchRow(pObj, mIdx, side, diff, totalPen, allPlayerOptions, teamName) {
     const optionsHtml = allPlayerOptions
@@ -1608,6 +1614,17 @@
     const diffClass = diff > 0 ? 'pos' : diff < 0 ? 'neg' : 'zero';
     const diffStr = diff > 0 ? `+${diff}` : String(diff);
 
+    const menuKey = `${state.activeRound}_${mIdx}_${side}`;
+    const isMenuOpen = openPenaltyMenus.has(menuKey);
+
+    const incidentTags = [];
+    if (totalPen < 0) incidentTags.push(`${totalPen} pt`);
+    if (pObj.surrender) incidentTags.push('Rend.');
+    if (pObj.abandonMatch) incidentTags.push('Ab.Part.');
+    if (pObj.abandonTournament) incidentTags.push('Ab.Torn.');
+    const hasIncident = incidentTags.length > 0;
+    const toggleLabel = hasIncident ? `⚠️ ${incidentTags.join(' • ')}` : 'Penaliz.';
+
     return `
       <tr>
         <td class="text-left">
@@ -1616,33 +1633,6 @@
             ${extraOption}
             ${optionsHtml}
           </select>
-        </td>
-        <td>
-          <select class="mini-select" data-m-idx="${mIdx}" data-side="${side}" data-field="paint">
-            <option value="" ${pObj.paint === '' ? 'selected' : ''}>-</option>
-            <option value="s" ${pObj.paint === 's' ? 'selected' : ''}>Sí (0)</option>
-            <option value="n" ${pObj.paint === 'n' ? 'selected' : ''}>No (${state.mode === 'teams' ? '-2' : '-1'})</option>
-          </select>
-        </td>
-        <td>
-          <select class="mini-select" data-m-idx="${mIdx}" data-side="${side}" data-field="delay">
-            <option value="N/A" ${pObj.delay === 'N/A' ? 'selected' : ''}>N/A</option>
-            <option value="< 10 min" ${pObj.delay === '< 10 min' ? 'selected' : ''}>&lt; 10 min</option>
-            <option value="10 - 20 min" ${pObj.delay === '10 - 20 min' ? 'selected' : ''}>10 - 20 min (-1)</option>
-            <option value="> 20 min" ${pObj.delay === '> 20 min' ? 'selected' : ''}>&gt; 20 min (-1)</option>
-          </select>
-        </td>
-        <td>
-          <span class="penalty-badge ${totalPen < 0 ? 'negative' : ''}">${totalPen}</span>
-        </td>
-        <td>
-          <input type="checkbox" ${pObj.surrender ? 'checked' : ''} data-m-idx="${mIdx}" data-side="${side}" data-field="surrender" title="Rendición S/N" />
-        </td>
-        <td>
-          <input type="checkbox" ${pObj.abandonMatch ? 'checked' : ''} data-m-idx="${mIdx}" data-side="${side}" data-field="abandonMatch" title="Abandono de Partida S/N" />
-        </td>
-        <td>
-          <input type="checkbox" ${pObj.abandonTournament ? 'checked' : ''} data-m-idx="${mIdx}" data-side="${side}" data-field="abandonTournament" title="Abandono del Torneo S/N" />
         </td>
         <td>
           <div class="result-btn-group">
@@ -1657,14 +1647,72 @@
         <td>
           <input type="number" class="num-input-sm" value="${pObj.vp}" min="0" max="100" data-m-idx="${mIdx}" data-side="${side}" data-field="vp" />
         </td>
-        <td>
-          <span class="diff-badge ${diffClass}">${diffStr}</span>
+        <td class="diff-cell-with-menu">
+          <div class="diff-and-trigger-wrap">
+            <span class="diff-badge ${diffClass}">${diffStr}</span>
+            <button type="button" class="penalty-drawer-toggle ${hasIncident ? 'has-incident' : ''} ${isMenuOpen ? 'open' : ''}" data-toggle-pen-menu="${menuKey}" title="Desplegar menú de Pintura, Atraso, Penalización y Abandono">
+              <span>${escapeHtml(toggleLabel)}</span>
+              <span class="drawer-chevron">${isMenuOpen ? '◂' : '▸'}</span>
+            </button>
+            ${
+              isMenuOpen
+                ? `<div class="penalty-side-drawer">
+                    <div class="penalty-drawer-item">
+                      <span class="penalty-drawer-label">PINTURA S/N</span>
+                      <select class="mini-select" data-m-idx="${mIdx}" data-side="${side}" data-field="paint">
+                        <option value="" ${pObj.paint === '' ? 'selected' : ''}>-</option>
+                        <option value="s" ${pObj.paint === 's' ? 'selected' : ''}>Sí (0)</option>
+                        <option value="n" ${pObj.paint === 'n' ? 'selected' : ''}>No (${state.mode === 'teams' ? '-2' : '-1'})</option>
+                      </select>
+                    </div>
+                    <div class="penalty-drawer-item">
+                      <span class="penalty-drawer-label">ATRASO</span>
+                      <select class="mini-select" data-m-idx="${mIdx}" data-side="${side}" data-field="delay">
+                        <option value="N/A" ${pObj.delay === 'N/A' ? 'selected' : ''}>N/A</option>
+                        <option value="< 10 min" ${pObj.delay === '< 10 min' ? 'selected' : ''}>&lt; 10 min</option>
+                        <option value="10 - 20 min" ${pObj.delay === '10 - 20 min' ? 'selected' : ''}>10 - 20 min (-1)</option>
+                        <option value="> 20 min" ${pObj.delay === '> 20 min' ? 'selected' : ''}>&gt; 20 min (-1)</option>
+                      </select>
+                    </div>
+                    <div class="penalty-drawer-item">
+                      <span class="penalty-drawer-label">PENALIZ.</span>
+                      <span class="penalty-badge ${totalPen < 0 ? 'negative' : ''}">${totalPen}</span>
+                    </div>
+                    <div class="penalty-drawer-item">
+                      <span class="penalty-drawer-label">RENDICIÓN</span>
+                      <input type="checkbox" ${pObj.surrender ? 'checked' : ''} data-m-idx="${mIdx}" data-side="${side}" data-field="surrender" title="Rendición S/N" />
+                    </div>
+                    <div class="penalty-drawer-item">
+                      <span class="penalty-drawer-label">AB. PARTIDA</span>
+                      <input type="checkbox" ${pObj.abandonMatch ? 'checked' : ''} data-m-idx="${mIdx}" data-side="${side}" data-field="abandonMatch" title="Abandono de Partida S/N" />
+                    </div>
+                    <div class="penalty-drawer-item">
+                      <span class="penalty-drawer-label">AB. TORNEO</span>
+                      <input type="checkbox" ${pObj.abandonTournament ? 'checked' : ''} data-m-idx="${mIdx}" data-side="${side}" data-field="abandonTournament" title="Abandono del Torneo S/N" />
+                    </div>
+                  </div>`
+                : ''
+            }
+          </div>
         </td>
       </tr>
     `;
   }
 
   function bindMatchCardEvents(container, currentRoundObj) {
+    container.querySelectorAll('button[data-toggle-pen-menu]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        const key = e.currentTarget.dataset.togglePenMenu;
+        if (!key) return;
+        if (openPenaltyMenus.has(key)) {
+          openPenaltyMenus.delete(key);
+        } else {
+          openPenaltyMenus.add(key);
+        }
+        renderRoundsView();
+      });
+    });
+
     container.querySelectorAll('.res-pill').forEach((btn) => {
       btn.addEventListener('click', (e) => {
         const mIdx = Number(e.currentTarget.dataset.mIdx);
@@ -1846,14 +1894,16 @@
     const votesMap = state.votes && typeof state.votes === 'object' ? state.votes : {};
     Object.values(votesMap).forEach((v) => {
       if (!v || typeof v !== 'object') return;
-      if (v.paintVote && String(v.paintVote).trim()) {
-        const pName = String(v.paintVote).trim();
-        paintCounts[pName] = (paintCounts[pName] || 0) + 1;
+      const voterName = String(v.voter || '').trim();
+      const rawPaint = String(v.paintVote || v.paint || '').trim();
+      const rawFair = String(v.fairPlayVote || v.fairPlay || '').trim();
+
+      if (rawPaint && rawPaint !== voterName) {
+        paintCounts[rawPaint] = (paintCounts[rawPaint] || 0) + 1;
         totalPaintVotes++;
       }
-      if (v.fairPlayVote && String(v.fairPlayVote).trim()) {
-        const fpName = String(v.fairPlayVote).trim();
-        fairPlayCounts[fpName] = (fairPlayCounts[fpName] || 0) + 1;
+      if (rawFair && rawFair !== voterName) {
+        fairPlayCounts[rawFair] = (fairPlayCounts[rawFair] || 0) + 1;
         totalFairPlayVotes++;
       }
     });
@@ -1877,6 +1927,93 @@
     };
   }
 
+  let lastAutoPromptedVotingKey = '';
+
+  function updateVotingControlUI() {
+    const paintOpen = !!state.votingPaintOpen;
+    const fairOpen = !!state.votingFairPlayOpen;
+    const anyOpen = paintOpen || fairOpen;
+
+    ['btnLaunchPaintVotingRounds', 'btnLaunchPaintVotingPodium'].forEach((id) => {
+      const btn = document.getElementById(id);
+      if (!btn) return;
+      btn.textContent = paintOpen ? '🎨 Cerrar Votación Pintura (Activa)' : '🎨 Lanzar Votación Pintura';
+      btn.classList.toggle('btn-voting-active', paintOpen);
+    });
+
+    ['btnLaunchFairPlayVotingRounds', 'btnLaunchFairPlayVotingPodium'].forEach((id) => {
+      const btn = document.getElementById(id);
+      if (!btn) return;
+      btn.textContent = fairOpen ? '🤝 Cerrar Votación Fair Play (Activa)' : '🤝 Lanzar Votación Fair Play';
+      btn.classList.toggle('btn-voting-active', fairOpen);
+    });
+
+    const openBtnsLabel =
+      paintOpen && fairOpen
+        ? '🗳️ Votar Pintura y Fair Play'
+        : paintOpen
+        ? '🎨 Votar Mejor Pintura'
+        : '🤝 Votar Premio Fair Play';
+
+    ['btnOpenVotingFromRounds', 'btnOpenVotingModal'].forEach((id) => {
+      const btn = document.getElementById(id);
+      if (!btn) return;
+      btn.textContent = openBtnsLabel;
+      btn.classList.toggle('hidden', !anyOpen);
+    });
+
+    const bannerEl = document.getElementById('activeVotingBannerRounds');
+    const bannerTxt = document.getElementById('activeVotingBannerText');
+    if (bannerEl) {
+      bannerEl.classList.toggle('hidden', !anyOpen);
+      if (bannerTxt && anyOpen) {
+        const cats = [paintOpen ? '🎨 Mejor Pintura' : '', fairOpen ? '🤝 Premio Fair Play' : '']
+          .filter(Boolean)
+          .join(' y ');
+        bannerTxt.innerHTML = `🗳️ <strong>¡VOTACIÓN ABIERTA!</strong> El Organizador ha habilitado la votación para <strong>${cats}</strong>.`;
+      }
+    }
+
+    // Si un Jugador está conectado y el Organizador lanza una votación, mostrar aviso/modal automáticamente
+    if (!isAdminMode && anyOpen) {
+      const currentKey = `${state.roomCode}_P${paintOpen ? 1 : 0}_F${fairOpen ? 1 : 0}`;
+      if (lastAutoPromptedVotingKey !== currentKey) {
+        lastAutoPromptedVotingKey = currentKey;
+        const modalEl = document.getElementById('elvenModal');
+        if (modalEl && modalEl.classList.contains('hidden')) {
+          openSpecialVotingModal();
+        }
+      }
+    } else if (!anyOpen) {
+      lastAutoPromptedVotingKey = '';
+    }
+  }
+
+  function toggleVotingCategory(category) {
+    if (!isAdminMode) return;
+    if (category === 'paint') {
+      state.votingPaintOpen = !state.votingPaintOpen;
+      saveState();
+      updateVotingControlUI();
+      renderPodiumView();
+      showToast(
+        state.votingPaintOpen
+          ? '🎨 ¡Votación de Mejor Pintura lanzada! Ya aparece en la pantalla de todos los jugadores.'
+          : '🔒 Votación de Mejor Pintura cerrada.'
+      );
+    } else if (category === 'fairPlay') {
+      state.votingFairPlayOpen = !state.votingFairPlayOpen;
+      saveState();
+      updateVotingControlUI();
+      renderPodiumView();
+      showToast(
+        state.votingFairPlayOpen
+          ? '🤝 ¡Votación de Premio Fair Play lanzada! Ya aparece en la pantalla de todos los jugadores.'
+          : '🔒 Votación de Premio Fair Play cerrada.'
+      );
+    }
+  }
+
   function renderPodiumView() {
     const standings = calculateStandings();
     document.getElementById('thPlayerOrTeam').textContent =
@@ -1886,6 +2023,8 @@
     if (finishedBanner) {
       finishedBanner.classList.toggle('hidden', !state.tournamentFinished);
     }
+
+    updateVotingControlUI();
 
     const awards = calculateSpecialAwards(standings);
     const awardsShowcaseEl = document.getElementById('specialAwardsShowcase');
@@ -1909,7 +2048,9 @@
           <span class="award-sub-detail">${
             awards.bestPaint
               ? `${awards.bestPaint.votes} voto(s) de ${awards.bestPaint.totalVotes} emitido(s)`
-              : 'Votación abierta para los jugadores'
+              : state.votingPaintOpen
+              ? '🟢 Votación abierta para los jugadores'
+              : '⏳ Pendiente que el Organizador lance la votación'
           }</span>
         </div>
 
@@ -1919,7 +2060,9 @@
           <span class="award-sub-detail">${
             awards.bestFairPlay
               ? `${awards.bestFairPlay.votes} voto(s) de ${awards.bestFairPlay.totalVotes} emitido(s)`
-              : 'Votación abierta para los jugadores'
+              : state.votingFairPlayOpen
+              ? '🟢 Votación abierta para los jugadores'
+              : '⏳ Pendiente que el Organizador lance la votación'
           }</span>
         </div>
       `;
@@ -2610,8 +2753,8 @@
           endTime: null,
           running: false
         };
-        delete alerted15MinRounds[`${state.roomCode}_${rObj.round}`];
-        delete alertedZeroRounds[`${state.roomCode}_${rObj.round}`];
+        delete warned15MinByRound[`${state.roomCode}_R${rObj.round}`];
+        delete warnedExpiredByRound[`${state.roomCode}_R${rObj.round}`];
         saveState();
         updateRoundTimerUI();
         showToast(`⏱️ Tiempo de Ronda ${rObj.round} fijado en ${mins} minutos.`);
@@ -2649,8 +2792,8 @@
           if (currentRem <= 0) {
             const mins = Number(t.durationMinutes) || 90;
             currentRem = mins * 60 * 1000;
-            delete alerted15MinRounds[`${state.roomCode}_${rObj.round}`];
-            delete alertedZeroRounds[`${state.roomCode}_${rObj.round}`];
+            delete warned15MinByRound[`${state.roomCode}_R${rObj.round}`];
+            delete warnedExpiredByRound[`${state.roomCode}_R${rObj.round}`];
           }
           t.remainingMs = currentRem;
           t.endTime = Date.now() + currentRem;
@@ -2675,22 +2818,66 @@
           endTime: null,
           running: false
         };
-        delete alerted15MinRounds[`${state.roomCode}_${rObj.round}`];
-        delete alertedZeroRounds[`${state.roomCode}_${rObj.round}`];
+        delete warned15MinByRound[`${state.roomCode}_R${rObj.round}`];
+        delete warnedExpiredByRound[`${state.roomCode}_R${rObj.round}`];
         saveState();
         updateRoundTimerUI();
         showToast(`↺ Reloj de Ronda ${rObj.round} reiniciado a ${mins}:00.`);
       });
     }
 
-    // Votación de Mejor Pintura y Fair Play
-    const btnOpenVotingFromRounds = document.getElementById('btnOpenVotingFromRounds');
-    if (btnOpenVotingFromRounds) {
-      btnOpenVotingFromRounds.addEventListener('click', openSpecialVotingModal);
+    // Lanzar / Cerrar Votaciones (Organizador) y Abrir Modal de Votación (Jugadores)
+    ['btnLaunchPaintVotingRounds', 'btnLaunchPaintVotingPodium'].forEach((id) => {
+      document.getElementById(id)?.addEventListener('click', () => toggleVotingCategory('paint'));
+    });
+    ['btnLaunchFairPlayVotingRounds', 'btnLaunchFairPlayVotingPodium'].forEach((id) => {
+      document.getElementById(id)?.addEventListener('click', () => toggleVotingCategory('fairPlay'));
+    });
+
+    ['btnOpenVotingFromRounds', 'btnOpenVotingModal', 'btnOpenVotingFromBanner'].forEach((id) => {
+      document.getElementById(id)?.addEventListener('click', openSpecialVotingModal);
+    });
+
+    // Minimizar / Expandir Tarjetas de Foto 2 (Código de Torneo y Resumen) + Modal
+    const btnToggleCompanionMinimize = document.getElementById('btnToggleCompanionMinimize');
+    if (btnToggleCompanionMinimize) {
+      btnToggleCompanionMinimize.addEventListener('click', () => {
+        const card = document.getElementById('companionRoomCard');
+        const body = document.getElementById('companionCollapsibleBody');
+        const minBadge = document.getElementById('minimizedRoomCodeBadge');
+        if (!card || !body) return;
+        const willMinimize = !card.classList.contains('is-minimized');
+        card.classList.toggle('is-minimized', willMinimize);
+        body.classList.toggle('hidden', willMinimize);
+        if (minBadge) minBadge.classList.toggle('hidden', !willMinimize);
+        btnToggleCompanionMinimize.textContent = willMinimize ? '+' : '—';
+        btnToggleCompanionMinimize.setAttribute('aria-expanded', String(!willMinimize));
+      });
     }
-    const btnOpenVotingModal = document.getElementById('btnOpenVotingModal');
-    if (btnOpenVotingModal) {
-      btnOpenVotingModal.addEventListener('click', openSpecialVotingModal);
+
+    const btnToggleStatusMinimize = document.getElementById('btnToggleStatusMinimize');
+    if (btnToggleStatusMinimize) {
+      btnToggleStatusMinimize.addEventListener('click', () => {
+        const card = document.getElementById('quickStatusCard');
+        const grid = document.getElementById('statusCollapsibleGrid');
+        if (!card || !grid) return;
+        const willMinimize = !card.classList.contains('is-minimized');
+        card.classList.toggle('is-minimized', willMinimize);
+        grid.classList.toggle('hidden', willMinimize);
+        btnToggleStatusMinimize.textContent = willMinimize ? '+' : '—';
+        btnToggleStatusMinimize.setAttribute('aria-expanded', String(!willMinimize));
+      });
+    }
+
+    const btnMinimizeModal = document.getElementById('btnMinimizeModal');
+    if (btnMinimizeModal) {
+      btnMinimizeModal.addEventListener('click', () => {
+        const modalBackdrop = document.getElementById('elvenModal');
+        if (!modalBackdrop) return;
+        const willMin = !modalBackdrop.classList.contains('is-minimized');
+        modalBackdrop.classList.toggle('is-minimized', willMin);
+        btnMinimizeModal.textContent = willMin ? '□' : '—';
+      });
     }
 
     // Finalizar Torneo Oficialmente
@@ -2717,6 +2904,14 @@
   }
 
   function openSpecialVotingModal() {
+    const paintOpen = !!state.votingPaintOpen;
+    const fairOpen = !!state.votingFairPlayOpen;
+
+    if (!paintOpen && !fairOpen) {
+      showToast('🔒 El Organizador aún no ha lanzado la votación de Pintura ni de Fair Play.');
+      return;
+    }
+
     const standings = calculateStandings();
     const candidates = standings.map((s) => s.name).filter(Boolean);
     if (candidates.length === 0) {
@@ -2724,35 +2919,23 @@
       return;
     }
 
-    let savedVoter = '';
+    let savedVoterKey = '';
     try {
-      savedVoter = localStorage.getItem(`${VOTER_IDENTITY_KEY}_${state.roomCode}`) || '';
+      savedVoterKey = localStorage.getItem(`${VOTER_IDENTITY_KEY}_${state.roomCode}`) || '';
     } catch (e) {
       // Ignorar
     }
 
-    const existingVote = savedVoter && state.votes && state.votes[savedVoter] ? state.votes[savedVoter] : null;
-    const currentPaint = existingVote?.paint || '';
-    const currentFairPlay = existingVote?.fairPlay || '';
+    const existingVote =
+      savedVoterKey && state.votes && state.votes[savedVoterKey] ? state.votes[savedVoterKey] : null;
+    const savedVoterName = existingVote?.voter || candidates.find((c) => c.replace(/[.#$/[\]]/g, '_') === savedVoterKey) || '';
+    const currentPaint = existingVote?.paintVote || existingVote?.paint || '';
+    const currentFairPlay = existingVote?.fairPlayVote || existingVote?.fairPlay || '';
 
     const voterOptionsHtml = [
       `<option value="">-- Selecciona tu nombre en el torneo --</option>`,
       ...candidates.map(
-        (c) => `<option value="${escapeHtml(c)}" ${c === savedVoter ? 'selected' : ''}>${escapeHtml(c)}</option>`
-      )
-    ].join('');
-
-    const paintOptionsHtml = [
-      `<option value="">-- Elige tu voto para Mejor Pintura --</option>`,
-      ...candidates.map(
-        (c) => `<option value="${escapeHtml(c)}" ${c === currentPaint ? 'selected' : ''}>🎨 ${escapeHtml(c)}</option>`
-      )
-    ].join('');
-
-    const fairPlayOptionsHtml = [
-      `<option value="">-- Elige tu voto para Premio Fair Play --</option>`,
-      ...candidates.map(
-        (c) => `<option value="${escapeHtml(c)}" ${c === currentFairPlay ? 'selected' : ''}>🤝 ${escapeHtml(c)}</option>`
+        (c) => `<option value="${escapeHtml(c)}" ${c === savedVoterName ? 'selected' : ''}>${escapeHtml(c)}</option>`
       )
     ].join('');
 
@@ -2760,7 +2943,7 @@
       '🗳️ Votación de Reconocimientos Especiales',
       `
         <p style="margin-bottom:14px; color:var(--text-parchment);">
-          Cada participante puede emitir su voto para <strong>🎨 Mejor Pintura</strong> y <strong>🤝 Premio Fair Play</strong>. Los resultados se actualizan en tiempo real en el Podio Final.
+          Selecciona primero tu nombre y luego elige a tu candidato. <strong>No está permitido votar por uno mismo.</strong>
         </p>
 
         <div class="field-group" style="margin-bottom:14px;">
@@ -2768,15 +2951,23 @@
           <select id="selectVoterIdentity">${voterOptionsHtml}</select>
         </div>
 
-        <div class="field-group" style="margin-bottom:14px;">
-          <label for="selectVoteBestPaint">2. Tu voto para 🎨 Mejor Pintura</label>
-          <select id="selectVoteBestPaint">${paintOptionsHtml}</select>
-        </div>
+        ${
+          paintOpen
+            ? `<div class="field-group" style="margin-bottom:14px;">
+                <label for="selectVoteBestPaint">🎨 Tu voto para Mejor Pintura (No puedes votarte a ti mismo)</label>
+                <select id="selectVoteBestPaint"></select>
+              </div>`
+            : ''
+        }
 
-        <div class="field-group" style="margin-bottom:18px;">
-          <label for="selectVoteFairPlay">3. Tu voto para 🤝 Premio Fair Play (Deportividad)</label>
-          <select id="selectVoteFairPlay">${fairPlayOptionsHtml}</select>
-        </div>
+        ${
+          fairOpen
+            ? `<div class="field-group" style="margin-bottom:18px;">
+                <label for="selectVoteFairPlay">🤝 Tu voto para Premio Fair Play (No puedes votarte a ti mismo)</label>
+                <select id="selectVoteFairPlay"></select>
+              </div>`
+            : ''
+        }
 
         <div class="modal-confirm-actions">
           <button type="button" class="btn-elven-outline" id="btnCancelVoteModal">Cancelar</button>
@@ -2789,33 +2980,81 @@
     const selectPaintEl = document.getElementById('selectVoteBestPaint');
     const selectFairEl = document.getElementById('selectVoteFairPlay');
 
+    function rebuildCandidateDropdowns(selectedVoter, preferredPaint, preferredFair) {
+      const otherCandidates = candidates.filter((c) => c !== selectedVoter);
+
+      if (selectPaintEl) {
+        selectPaintEl.innerHTML = [
+          `<option value="">-- Elige tu voto para Mejor Pintura --</option>`,
+          ...otherCandidates.map(
+            (c) =>
+              `<option value="${escapeHtml(c)}" ${
+                c === preferredPaint && c !== selectedVoter ? 'selected' : ''
+              }>🎨 ${escapeHtml(c)}</option>`
+          )
+        ].join('');
+      }
+
+      if (selectFairEl) {
+        selectFairEl.innerHTML = [
+          `<option value="">-- Elige tu voto para Premio Fair Play --</option>`,
+          ...otherCandidates.map(
+            (c) =>
+              `<option value="${escapeHtml(c)}" ${
+                c === preferredFair && c !== selectedVoter ? 'selected' : ''
+              }>🤝 ${escapeHtml(c)}</option>`
+          )
+        ].join('');
+      }
+    }
+
+    rebuildCandidateDropdowns(savedVoterName, currentPaint, currentFairPlay);
+
     if (selectVoterEl) {
       selectVoterEl.addEventListener('change', () => {
         const who = selectVoterEl.value;
-        const prev = who && state.votes && state.votes[who] ? state.votes[who] : null;
-        if (prev) {
-          if (prev.paint && selectPaintEl) selectPaintEl.value = prev.paint;
-          if (prev.fairPlay && selectFairEl) selectFairEl.value = prev.fairPlay;
-        }
+        const whoKey = who.replace(/[.#$/[\]]/g, '_');
+        const prev = whoKey && state.votes && state.votes[whoKey] ? state.votes[whoKey] : null;
+        const prevPaint = prev?.paintVote || prev?.paint || (selectPaintEl ? selectPaintEl.value : '');
+        const prevFair = prev?.fairPlayVote || prev?.fairPlay || (selectFairEl ? selectFairEl.value : '');
+        rebuildCandidateDropdowns(who, prevPaint, prevFair);
       });
     }
 
     document.getElementById('btnCancelVoteModal')?.addEventListener('click', closeModal);
     document.getElementById('btnSubmitVoteModal')?.addEventListener('click', async () => {
       const voterName = (selectVoterEl?.value || '').trim();
-      const paintVote = (selectPaintEl?.value || '').trim();
-      const fairPlayVote = (selectFairEl?.value || '').trim();
+      const voterKey = voterName.replace(/[.#$/[\]]/g, '_');
+      const prevVoteObj = voterKey && state.votes && state.votes[voterKey] ? state.votes[voterKey] : {};
+
+      const paintVote = paintOpen
+        ? (selectPaintEl?.value || '').trim()
+        : String(prevVoteObj.paintVote || prevVoteObj.paint || '').trim();
+      const fairPlayVote = fairOpen
+        ? (selectFairEl?.value || '').trim()
+        : String(prevVoteObj.fairPlayVote || prevVoteObj.fairPlay || '').trim();
 
       if (!voterName) {
         showToast('⚠️ Por favor selecciona tu nombre en la lista de participantes.');
         return;
       }
-      if (!paintVote && !fairPlayVote) {
-        showToast('⚠️ Selecciona al menos un candidato para Mejor Pintura o Fair Play.');
+      if ((paintOpen && paintVote === voterName) || (fairOpen && fairPlayVote === voterName)) {
+        showToast('⚠️ No puedes votar por ti mismo.');
+        return;
+      }
+      if ((paintOpen && !paintVote) && (fairOpen && !fairPlayVote)) {
+        showToast('⚠️ Selecciona al menos un candidato para emitir tu voto.');
+        return;
+      }
+      if (paintOpen && !fairOpen && !paintVote) {
+        showToast('⚠️ Selecciona un candidato para Mejor Pintura.');
+        return;
+      }
+      if (fairOpen && !paintOpen && !fairPlayVote) {
+        showToast('⚠️ Selecciona un candidato para Premio Fair Play.');
         return;
       }
 
-      const voterKey = voterName.replace(/[.#$/[\]]/g, '_');
       try {
         localStorage.setItem(`${VOTER_IDENTITY_KEY}_${state.roomCode}`, voterKey);
       } catch (e) {
@@ -2824,8 +3063,8 @@
 
       await submitPlayerVoteToCloud(voterKey, {
         voter: voterName,
-        paint: paintVote,
-        fairPlay: fairPlayVote,
+        paintVote,
+        fairPlayVote,
         updatedAt: Date.now()
       });
 
@@ -3022,7 +3261,10 @@
   function openModal(title, htmlContent) {
     document.getElementById('modalTitle').textContent = title;
     document.getElementById('modalBodyContent').innerHTML = htmlContent;
-    document.getElementById('elvenModal').classList.remove('hidden');
+    const modalEl = document.getElementById('elvenModal');
+    modalEl.classList.remove('hidden', 'is-minimized');
+    const minBtn = document.getElementById('btnMinimizeModal');
+    if (minBtn) minBtn.textContent = '—';
   }
 
   function openConfirmModal(title, message, confirmLabel, onConfirm) {
@@ -3035,7 +3277,10 @@
         <button type="button" class="btn-dark-danger" id="btnAcceptConfirmModal">${escapeHtml(confirmLabel)}</button>
       </div>
     `;
-    document.getElementById('elvenModal').classList.remove('hidden');
+    const modalEl = document.getElementById('elvenModal');
+    modalEl.classList.remove('hidden', 'is-minimized');
+    const minBtn = document.getElementById('btnMinimizeModal');
+    if (minBtn) minBtn.textContent = '—';
 
     document.getElementById('btnCancelConfirmModal').addEventListener('click', closeModal);
     document.getElementById('btnAcceptConfirmModal').addEventListener('click', () => {
@@ -3134,19 +3379,19 @@
       const awards = calculateSpecialAwards(standings);
       specialAwardsSlot.innerHTML = `
         <div class="celebration-special-awards">
-          <span class="celebration-special-pill">⚔️ <strong>General Más Letal:</strong> ${
-            awards.mostLethal
-              ? `${escapeHtml(awards.mostLethal.name)} (${awards.mostLethal.vpFavor} PV)`
+          <span class="celebration-award-pill">⚔️ <strong>General Más Letal:</strong> ${
+            awards.lethalGeneral
+              ? `${escapeHtml(awards.lethalGeneral.name)} (${awards.lethalGeneral.vpFavor} PV)`
               : 'Por definir'
           }</span>
-          <span class="celebration-special-pill">🎨 <strong>Mejor Pintura:</strong> ${
+          <span class="celebration-award-pill">🎨 <strong>Mejor Pintura:</strong> ${
             awards.bestPaint
               ? `${escapeHtml(awards.bestPaint.name)} (${awards.bestPaint.votes} voto${awards.bestPaint.votes === 1 ? '' : 's'})`
               : 'Sin votos aún'
           }</span>
-          <span class="celebration-special-pill">🤝 <strong>Premio Fair Play:</strong> ${
-            awards.fairPlay
-              ? `${escapeHtml(awards.fairPlay.name)} (${awards.fairPlay.votes} voto${awards.fairPlay.votes === 1 ? '' : 's'})`
+          <span class="celebration-award-pill">🤝 <strong>Premio Fair Play:</strong> ${
+            awards.bestFairPlay
+              ? `${escapeHtml(awards.bestFairPlay.name)} (${awards.bestFairPlay.votes} voto${awards.bestFairPlay.votes === 1 ? '' : 's'})`
               : 'Sin votos aún'
           }</span>
         </div>

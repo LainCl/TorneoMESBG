@@ -134,45 +134,58 @@
       </div>
 
       <!-- Tarjeta de Sala Estilo Companion (Código de Torneo) -->
-      <div class="CompanionRoomCard">
+      <div class="CompanionRoomCard" id="companionRoomCard">
         <div class="companion-top-row">
-          <span class="companion-label">CÓDIGO DE TORNEO</span>
+          <div class="companion-title-inline">
+            <span class="companion-label">CÓDIGO DE TORNEO</span>
+            <span class="companion-minimized-code hidden" id="minimizedRoomCodeBadge">------</span>
+          </div>
           <div class="companion-code-actions">
             <button type="button" class="companion-mini-btn" id="btnCopyRoomCode" title="Copiar código e invitación del torneo">
               📋 Copiar Link
             </button>
-            <button type="button" class="companion-mini-btn" id="btnNewRoomCode" title="Crear un nuevo torneo con un ID diferente y quedar como Host">
+            <button type="button" class="companion-mini-btn" id="btnNewRoomCode" title="Crear un nuevo torneo con un ID diferente y quedar como Organizador">
               ➕ Nuevo ID
+            </button>
+            <button type="button" class="companion-mini-btn companion-collapse-btn" id="btnToggleCompanionMinimize" title="Minimizar / Expandir panel de Código de Torneo" aria-expanded="true">
+              —
             </button>
           </div>
         </div>
 
-        <div class="companion-code-display" id="activeRoomCodeDisplay" title="Comparte este código con los jugadores">
-          ------
-        </div>
-
-        <div class="companion-join-box">
-          <span class="companion-join-label">¿Buscas otro torneo? Ingresa su ID:</span>
-          <div class="companion-join-row">
-            <input type="text" id="inputJoinRoomCode" maxlength="8" placeholder="Ej: M8K4R2" autocomplete="off" />
-            <button type="button" class="btn-gold-cta btn-sm" id="btnJoinRoomCode">Entrar</button>
+        <div class="companion-collapsible-body" id="companionCollapsibleBody">
+          <div class="companion-code-display" id="activeRoomCodeDisplay" title="Comparte este código con los jugadores">
+            ------
           </div>
-        </div>
 
-        <!-- Lista de Mis Torneos Recientes -->
-        <div class="companion-recent-box" id="recentRoomsSection">
-          <span class="companion-join-label">Mis Torneos Recientes:</span>
-          <div class="recent-rooms-list" id="recentRoomsList"></div>
+          <div class="companion-join-box">
+            <span class="companion-join-label">¿Buscas otro torneo? Ingresa su ID:</span>
+            <div class="companion-join-row">
+              <input type="text" id="inputJoinRoomCode" maxlength="8" placeholder="Ej: M8K4R2" autocomplete="off" />
+              <button type="button" class="btn-gold-cta btn-sm" id="btnJoinRoomCode">Entrar</button>
+            </div>
+          </div>
+
+          <!-- Lista de Mis Torneos Recientes -->
+          <div class="companion-recent-box" id="recentRoomsSection">
+            <span class="companion-join-label">Mis Torneos Recientes:</span>
+            <div class="recent-rooms-list" id="recentRoomsList"></div>
+          </div>
         </div>
       </div>
 
       <!-- Tarjeta de Resumen en Vivo del Torneo -->
-      <div class="QuickStatusCard">
+      <div class="QuickStatusCard" id="quickStatusCard">
         <div class="status-header">
-          <span class="status-dot"></span>
-          <span id="sidebarTournamentName">TORNEO MESBG</span>
+          <div class="status-header-title">
+            <span class="status-dot"></span>
+            <span id="sidebarTournamentName">TORNEO MESBG</span>
+          </div>
+          <button type="button" class="companion-mini-btn companion-collapse-btn" id="btnToggleStatusMinimize" title="Minimizar / Expandir resumen del torneo" aria-expanded="true">
+            —
+          </button>
         </div>
-        <div class="status-grid">
+        <div class="status-grid" id="statusCollapsibleGrid">
           <div class="status-stat">
             <span class="stat-label">PARTICIPANTES</span>
             <strong class="stat-val" id="statActivePlayers">0 / 0</strong>
@@ -422,12 +435,24 @@
                 <button type="button" class="btn-elven-outline btn-sm" id="btnResetTimer" title="Reiniciar reloj de esta ronda">↺ Reiniciar</button>
               </div>
 
-              <!-- Botón de Votación accesible para Jugadores y Organizador -->
+              <!-- Controles de Votación (Organizador lanza la votación; Jugadores la ven cuando está activa) -->
               <div class="timer-player-actions">
-                <button type="button" class="btn-elven-outline btn-sm" id="btnOpenVotingFromRounds">
-                  🎨 🤝 Votar Pintura y Fair Play
+                <button type="button" class="btn-elven-outline btn-sm admin-only-block" id="btnLaunchPaintVotingRounds" title="Habilitar o cerrar la votación de Mejor Pintura para los jugadores">
+                  🎨 Lanzar Votación Pintura
+                </button>
+                <button type="button" class="btn-elven-outline btn-sm admin-only-block" id="btnLaunchFairPlayVotingRounds" title="Habilitar o cerrar la votación de Fair Play para los jugadores">
+                  🤝 Lanzar Votación Fair Play
+                </button>
+                <button type="button" class="btn-gold-cta btn-sm hidden" id="btnOpenVotingFromRounds">
+                  🗳️ Votar Ahora
                 </button>
               </div>
+            </div>
+
+            <!-- Banner en vivo cuando el Organizador habilita una Votación -->
+            <div class="active-voting-banner hidden" id="activeVotingBannerRounds">
+              <span id="activeVotingBannerText">🗳️ <strong>¡VOTACIÓN ABIERTA!</strong> El Organizador ha habilitado la votación para los jugadores.</span>
+              <button type="button" class="btn-gold-cta btn-sm" id="btnOpenVotingFromBanner">🗳️ Emitir Mi Voto</button>
             </div>
 
             <!-- Alerta de Últimos 15 Minutos -->
@@ -501,11 +526,17 @@
             <div class="block-header-flex">
               <div>
                 <span class="elven-section-label">RECONOCIMIENTOS ESPECIALES DEL TORNEO</span>
-                <p class="helper-caption">Votación abierta para todos los participantes (Mejor Pintura y Fair Play) y cálculo automático de General Más Letal.</p>
+                <p class="helper-caption" id="specialAwardsStatusCaption">Cálculo automático de General Más Letal y votaciones habilitadas por el Organizador (sin autovoto).</p>
               </div>
               <div class="inline-add-group">
-                <button type="button" class="btn-gold-cta btn-sm" id="btnOpenVotingModal">
-                  🗳️ Votar Mejor Pintura y Fair Play
+                <button type="button" class="btn-elven-outline btn-sm admin-only-block" id="btnLaunchPaintVotingPodium">
+                  🎨 Lanzar Votación Pintura
+                </button>
+                <button type="button" class="btn-elven-outline btn-sm admin-only-block" id="btnLaunchFairPlayVotingPodium">
+                  🤝 Lanzar Votación Fair Play
+                </button>
+                <button type="button" class="btn-gold-cta btn-sm hidden" id="btnOpenVotingModal">
+                  🗳️ Votar Ahora
                 </button>
               </div>
             </div>
@@ -597,10 +628,13 @@
 
   <!-- Modal de Reglas y Premios -->
   <div class="elven-modal-backdrop hidden" id="elvenModal">
-    <div class="elven-modal-card">
+    <div class="elven-modal-card" id="elvenModalCard">
       <div class="modal-header">
         <h3 id="modalTitle">Reglas del Sistema</h3>
-        <button class="modal-close-btn" id="btnCloseModal">✕</button>
+        <div class="modal-header-actions">
+          <button class="modal-close-btn" id="btnMinimizeModal" title="Minimizar / Restaurar ventana">—</button>
+          <button class="modal-close-btn" id="btnCloseModal" title="Cerrar ventana">✕</button>
+        </div>
       </div>
       <div class="modal-body" id="modalBodyContent"></div>
     </div>
