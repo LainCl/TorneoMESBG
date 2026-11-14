@@ -88,6 +88,11 @@
       </svg>
       <span>@comunidad_mesbg_cl</span>
     </a>
+    <span class="social-sep">✦</span>
+    <span class="live-sync-badge" id="liveSyncBadge" title="Estado de sincronización en vivo">⚪ SIN CONECTAR</span>
+    <button type="button" class="ig-link-pill admin-toggle-pill" id="btnToggleAdminMode" title="Cambiar entre Vista Jugador y Modo Organizador">
+      🔒 Vista Jugador
+    </button>
   </div>
 
   <!-- Layout Principal -->
@@ -354,8 +359,13 @@
               <div class="round-pills-bar" id="roundPillsContainer"></div>
             </div>
 
-            <!-- Barra de Controles de la Ronda -->
-            <div class="round-Macro-toolbar">
+            <!-- Buscador Rápido de Mesa / Jugador -->
+            <div class="player-search-row">
+              <input type="text" id="inputFilterPlayerMatch" placeholder="🔍 Buscar jugador, equipo o número de mesa en esta ronda..." />
+            </div>
+
+            <!-- Barra de Controles de la Ronda (Solo Organizador) -->
+            <div class="round-Macro-toolbar admin-only-block">
               <button class="btn-gold-cta btn-compact" id="btnPairCurrentRound">
                 <span>▶</span> EMPAREJAR RONDAS
               </button>
@@ -496,6 +506,7 @@
   <!-- Toast de Notificación -->
   <div id="toastContainer" class="toast-container"></div>
 
+  <script src="cloudConfig.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

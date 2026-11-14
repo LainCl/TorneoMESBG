@@ -1532,6 +1532,89 @@ select:focus {
   opacity: 0.75;
 }
 
+.live-sync-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-family: var(--font-serif);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  background: rgba(15, 27, 24, 0.85);
+  border: 1px solid rgba(169, 189, 179, 0.3);
+  color: var(--text-muted);
+}
+
+.live-sync-badge.online {
+  border-color: rgba(56, 178, 124, 0.65);
+  color: #6ee7b0;
+  background: rgba(16, 42, 32, 0.88);
+}
+
+.admin-toggle-pill {
+  cursor: pointer;
+}
+
+.admin-toggle-pill.is-admin {
+  border-color: var(--gold-primary);
+  background: rgba(84, 65, 20, 0.65);
+  color: var(--gold-bright);
+}
+
+.player-search-row {
+  margin: 12px 0 6px;
+}
+
+.player-search-row input[type="text"] {
+  width: 100%;
+  background: rgba(8, 15, 13, 0.9);
+  border: 1px solid rgba(202, 165, 84, 0.38);
+  padding: 10px 14px;
+  font-size: 0.88rem;
+}
+
+/* ==========================================================================
+   MODO ESPECTADOR / JUGADOR (SOLO LECTURA DE RONDAS, MESAS Y PODIO)
+   ========================================================================== */
+body.spectator-mode .category-card[data-tab="setup"],
+body.spectator-mode #view-setup,
+body.spectator-mode #btnGoHome,
+body.spectator-mode .admin-only-block,
+body.spectator-mode #teamRoundPairingPanel,
+body.spectator-mode .match-card [data-delete-match] {
+  display: none !important;
+}
+
+body.spectator-mode .category-grid {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+body.spectator-mode .device-topbar {
+  grid-template-columns: 1fr 44px;
+}
+
+body.spectator-mode .match-card input,
+body.spectator-mode .match-card select,
+body.spectator-mode .match-card .res-pill {
+  pointer-events: none;
+  opacity: 0.95;
+}
+
+body.spectator-mode .match-card select {
+  appearance: none;
+  -webkit-appearance: none;
+  border-color: transparent;
+  background: transparent !important;
+}
+
+body.spectator-mode .match-card .num-input-sm,
+body.spectator-mode .match-card .match-table-input {
+  border-color: transparent !important;
+  background: transparent !important;
+}
+
 .elven-footer {
   position: relative;
   z-index: 10;

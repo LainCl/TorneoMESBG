@@ -4,9 +4,16 @@
 
 (function () {
   const STORAGE_KEY = 'mesbg_torneo_state_v2';
+  const FIREBASE_URL_STORAGE_KEY = 'mesbg_firebase_db_url';
+  const ADMIN_SESSION_KEY = 'mesbg_admin_unlocked';
 
   // Estado central de la aplicación
   let state = buildCleanInitialState();
+  let isAdminMode = false;
+  let searchFilterQuery = '';
+  let cloudEventSource = null;
+  let cloudPollTimer = null;
+  let isApplyingRemoteUpdate = false;
 
   // =========================================================================
   // 1. INICIALIZACIÓN Y PERSISTENCIA DEL ESTADO
@@ -84,14 +91,35 @@
   }
 
   function saveState() {
+    state.updatedAt = Date.now();
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     } catch (e) {
       console.warn('No se pudo guardar en localStorage:', e);
     }
+    if (isAdminMode && !isApplyingRemoteUpdate) {
+      pushStateToCloud();
+    }
   }
 
   function loadState() {
+    // 1. Verificar si viene parámetro ?db= en la URL para conectar jugadores automáticamente
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const dbParam = params.get('db');
+      if (dbParam && dbParam.startsWith('https://')) {
+        localStorage.setItem(FIREBASE_URL_STORAGE_KEY, dbParam.replace(/\/+$/, ''));
+      }
+    } catch (e) {
+      // Ignorar
+    }
+
+    // 2. Determinar si inicia en Modo Organizador o Vista Jugador
+    const isLocalhost =
+      window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    const unlockedSession = sessionStorage.getItem(ADMIN_SESSION_KEY) === 'true';
+    isAdminMode = isLocalhost || unlockedSession;
+
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
@@ -106,6 +134,147 @@
     }
     state = buildCleanInitialState();
     saveState();
+  }
+
+  // =========================================================================
+  // 1B. SINCRONIZACIÓN EN TIEMPO REAL CON FIREBASE REALTIME DATABASE
+  // =========================================================================
+
+  function getFirebaseDbUrl() {
+    const fromConfig =
+      window.MESBG_CLOUD_CONFIG && window.MESBG_CLOUD_CONFIG.FIREBASE_DB_URL
+        ? window.MESBG_CLOUD_CONFIG.FIREBASE_DB_URL.trim()
+        : '';
+    const fromLocal = localStorage.getItem(FIREBASE_URL_STORAGE_KEY) || '';
+    const url = (fromConfig || fromLocal).replace(/\/+$/, '');
+    return url;
+  }
+
+  function getAdminPin() {
+    return (window.MESBG_CLOUD_CONFIG && window.MESBG_CLOUD_CONFIG.ADMIN_PIN) || 'deazul2026';
+  }
+
+  function updateLiveSyncBadge(statusText, isOnline) {
+    const badge = document.getElementById('liveSyncBadge');
+    if (!badge) return;
+    badge.textContent = statusText;
+    badge.classList.toggle('online', !!isOnline);
+  }
+
+  async function pushStateToCloud() {
+    const dbUrl = getFirebaseDbUrl();
+    if (!dbUrl) return;
+
+    try {
+      updateLiveSyncBadge('🔄 PUBLICANDO...', true);
+      const res = await fetch(`${dbUrl}/torneo_mesbg.json`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(state)
+      });
+      if (res.ok) {
+        updateLiveSyncBadge('🟢 EN VIVO', true);
+      } else {
+        updateLiveSyncBadge('⚠️ ERROR NUBE', false);
+      }
+    } catch (err) {
+      console.warn('Error al sincronizar con Firebase:', err);
+      updateLiveSyncBadge('⚠️ SIN CONEXIÓN', false);
+    }
+  }
+
+  async function pullStateFromCloud() {
+    const dbUrl = getFirebaseDbUrl();
+    if (!dbUrl) {
+      updateLiveSyncBadge('⚪ MODO LOCAL', false);
+      return;
+    }
+
+    try {
+      const res = await fetch(`${dbUrl}/torneo_mesbg.json`);
+      if (!res.ok) return;
+      const remoteData = await res.json();
+      if (remoteData && Array.isArray(remoteData.rounds)) {
+        const localTime = Number(state.updatedAt || 0);
+        const remoteTime = Number(remoteData.updatedAt || 0);
+        if (!isAdminMode || remoteTime > localTime || state.players.length === 0) {
+          isApplyingRemoteUpdate = true;
+          state = remoteData;
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+          renderAll();
+          isApplyingRemoteUpdate = false;
+        }
+      }
+      updateLiveSyncBadge('🟢 EN VIVO', true);
+    } catch (err) {
+      updateLiveSyncBadge('⚠️ SIN CONEXIÓN', false);
+    }
+  }
+
+  function startCloudRealtimeSync() {
+    if (cloudEventSource) {
+      cloudEventSource.close();
+      cloudEventSource = null;
+    }
+    if (cloudPollTimer) {
+      clearInterval(cloudPollTimer);
+      cloudPollTimer = null;
+    }
+
+    const dbUrl = getFirebaseDbUrl();
+    if (!dbUrl) {
+      updateLiveSyncBadge('⚪ MODO LOCAL', false);
+      return;
+    }
+
+    // Lectura inicial inmediata
+    pullStateFromCloud();
+
+    // Suscripción en tiempo real mediante Server-Sent Events (SSE) nativo de Firebase
+    try {
+      const sse = new EventSource(`${dbUrl}/torneo_mesbg.json`);
+      sse.addEventListener('put', (ev) => {
+        try {
+          const payload = JSON.parse(ev.data);
+          if (payload && payload.data && Array.isArray(payload.data.rounds)) {
+            const remoteTime = Number(payload.data.updatedAt || 0);
+            const localTime = Number(state.updatedAt || 0);
+            if (remoteTime >= localTime || !isAdminMode) {
+              isApplyingRemoteUpdate = true;
+              state = payload.data;
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+              renderAll();
+              isApplyingRemoteUpdate = false;
+            }
+            updateLiveSyncBadge('🟢 EN VIVO', true);
+          }
+        } catch (e) {
+          // Ignorar paquete parcial
+        }
+      });
+      cloudEventSource = sse;
+    } catch (e) {
+      console.warn('SSE no disponible, usando polling:', e);
+    }
+
+    // Respaldo de actualización periódica cada 5 segundos
+    cloudPollTimer = setInterval(pullStateFromCloud, 5000);
+  }
+
+  function applyRoleModeUI() {
+    document.body.classList.toggle('spectator-mode', !isAdminMode);
+    const btn = document.getElementById('btnToggleAdminMode');
+    if (btn) {
+      btn.textContent = isAdminMode ? '🔓 Modo Organizador' : '🔒 Vista Jugador';
+      btn.classList.toggle('is-admin', isAdminMode);
+    }
+
+    if (!isAdminMode) {
+      const setupView = document.getElementById('view-setup');
+      if (setupView && setupView.classList.contains('active')) {
+        switchTab('rounds');
+      }
+    }
   }
 
   // =========================================================================
@@ -811,7 +980,16 @@
         ? state.teams.flatMap((t) => t.members)
         : [...state.players, 'BYE'];
 
+    const cleanFilter = (searchFilterQuery || '').trim().toLowerCase();
+
     currentRoundObj.matches.forEach((match, mIdx) => {
+      if (cleanFilter) {
+        const hay = `${match.table} ${match.p1.name} ${match.p2.name} ${match.team1 || ''} ${
+          match.team2 || ''
+        }`.toLowerCase();
+        if (!hay.includes(cleanFilter)) return;
+      }
+
       const card = document.createElement('div');
       card.className = 'match-card';
 
@@ -1737,6 +1915,142 @@
     document.getElementById('elvenModal').addEventListener('click', (e) => {
       if (e.target.id === 'elvenModal') closeModal();
     });
+
+    // Buscador de jugador / mesa en vista de Rondas
+    const searchInput = document.getElementById('inputFilterPlayerMatch');
+    if (searchInput) {
+      searchInput.addEventListener('input', (e) => {
+        searchFilterQuery = e.target.value;
+        renderRoundsView();
+      });
+    }
+
+    // Botón Modo Organizador / Configuración Firebase en Vivo
+    const adminBtn = document.getElementById('btnToggleAdminMode');
+    if (adminBtn) {
+      adminBtn.addEventListener('click', openAdminAndCloudModal);
+    }
+  }
+
+  function openAdminAndCloudModal() {
+    const currentDbUrl = getFirebaseDbUrl();
+    const shareUrl = currentDbUrl
+      ? `${window.location.origin}${window.location.pathname}?db=${encodeURIComponent(currentDbUrl)}`
+      : `${window.location.origin}${window.location.pathname}`;
+
+    openModal(
+      'Modo Organizador y Seguimiento en Vivo (Firebase)',
+      `
+        <h4>1. Modo de Visualización en este Dispositivo</h4>
+        <p style="margin-bottom:10px;">
+          Estado actual: <strong style="color:var(--gold-bright);">${
+            isAdminMode
+              ? '🔓 Modo Organizador (Edición habilitada)'
+              : '🔒 Vista Jugador (Solo lectura de Rondas, Mesas y Podio)'
+          }</strong>
+        </p>
+        ${
+          !isAdminMode
+            ? `<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:16px;">
+                <input type="password" id="inputAdminPin" placeholder="Ingresa clave de organizador..." style="min-width:220px;" />
+                <button type="button" class="btn-gold-cta btn-sm" id="btnUnlockAdmin">🔓 Desbloquear Organizador</button>
+              </div>`
+            : `<div style="margin-bottom:16px;">
+                <button type="button" class="btn-elven-outline btn-sm" id="btnLockToSpectator">👁️ Cambiar a Vista Jugador (Previsualizar)</button>
+              </div>`
+        }
+
+        <h4>2. Base de Datos en Tiempo Real (Firebase Realtime Database)</h4>
+        <p class="helper-caption" style="margin-bottom:8px;">
+          Conecta una URL de <strong>Firebase Realtime Database</strong> para que todos los jugadores vean las rondas, mesas y el podio en vivo desde sus celulares:
+        </p>
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:12px;">
+          <input type="text" id="inputFirebaseDbUrl" value="${escapeHtml(currentDbUrl)}" placeholder="https://tu-proyecto-default-rtdb.firebaseio.com" style="flex:1; min-width:260px;" />
+          <button type="button" class="btn-gold-cta btn-sm" id="btnSaveFirebaseUrl">☁️ Conectar y Publicar</button>
+        </div>
+
+        ${
+          currentDbUrl
+            ? `<div style="background:rgba(9,17,15,0.85); border:1px solid var(--border-gold); border-radius:10px; padding:10px 12px; margin-bottom:12px;">
+                <span class="stat-label">LINK DIRECTO PARA ENVIAR A LOS JUGADORES (WHATSAPP):</span>
+                <div style="display:flex; gap:8px; align-items:center; margin-top:4px;">
+                  <input type="text" readonly value="${escapeHtml(shareUrl)}" id="inputSharePlayerLink" style="flex:1; font-size:0.78rem;" />
+                  <button type="button" class="btn-elven-outline btn-sm" id="btnCopyShareLink">📋 Copiar Link</button>
+                </div>
+              </div>`
+            : ''
+        }
+
+        <h4>¿Cómo crear tu URL gratuita de Firebase en 1 minuto?</h4>
+        <ul>
+          <li>Entra a <a href="https://console.firebase.google.com/" target="_blank" rel="noopener" style="color:var(--gold-bright);">console.firebase.google.com</a> y crea un proyecto.</li>
+          <li>En el menú izquierdo ve a <strong>Compilación → Realtime Database → Crear base de datos</strong>.</li>
+          <li>Elige <strong>Comenzar en modo de prueba</strong> y copia la URL que aparece arriba (termina en <code>.firebaseio.com</code> o <code>.firebasedatabase.app</code>).</li>
+          <li>Pégala arriba (o dentro del archivo <code>cloudConfig.js</code> de tu repositorio para que quede fija para siempre).</li>
+        </ul>
+      `
+    );
+
+    const btnUnlock = document.getElementById('btnUnlockAdmin');
+    if (btnUnlock) {
+      btnUnlock.addEventListener('click', () => {
+        const pinVal = (document.getElementById('inputAdminPin')?.value || '').trim();
+        if (pinVal === getAdminPin()) {
+          isAdminMode = true;
+          sessionStorage.setItem(ADMIN_SESSION_KEY, 'true');
+          applyRoleModeUI();
+          closeModal();
+          showToast('🔓 Modo Organizador activado.');
+        } else {
+          showToast('⚠️ Clave incorrecta.');
+        }
+      });
+    }
+
+    const btnLock = document.getElementById('btnLockToSpectator');
+    if (btnLock) {
+      btnLock.addEventListener('click', () => {
+        isAdminMode = false;
+        sessionStorage.removeItem(ADMIN_SESSION_KEY);
+        applyRoleModeUI();
+        closeModal();
+        showToast('🔒 Vista Jugador activada (solo lectura de Rondas, Mesas y Podio).');
+      });
+    }
+
+    const btnSaveDb = document.getElementById('btnSaveFirebaseUrl');
+    if (btnSaveDb) {
+      btnSaveDb.addEventListener('click', async () => {
+        const rawUrl = (document.getElementById('inputFirebaseDbUrl')?.value || '').trim().replace(/\/+$/, '');
+        if (!rawUrl) {
+          localStorage.removeItem(FIREBASE_URL_STORAGE_KEY);
+          startCloudRealtimeSync();
+          closeModal();
+          showToast('Sincronización en nube desactivada (Modo Local).');
+          return;
+        }
+        if (!rawUrl.startsWith('https://')) {
+          showToast('⚠️ La URL debe comenzar con https://');
+          return;
+        }
+        localStorage.setItem(FIREBASE_URL_STORAGE_KEY, rawUrl);
+        await pushStateToCloud();
+        startCloudRealtimeSync();
+        openAdminAndCloudModal();
+        showToast('☁️ Conectado a Firebase y torneo publicado en vivo.');
+      });
+    }
+
+    const btnCopy = document.getElementById('btnCopyShareLink');
+    if (btnCopy) {
+      btnCopy.addEventListener('click', () => {
+        const inp = document.getElementById('inputSharePlayerLink');
+        if (inp) {
+          navigator.clipboard.writeText(inp.value);
+          showToast('📋 Link para jugadores copiado al portapapeles.');
+        }
+      });
+    }
   }
 
   function buildIndividualMatchesFromTeamClashes(rObj) {
@@ -2282,6 +2596,8 @@
   document.addEventListener('DOMContentLoaded', () => {
     loadState();
     initEventListeners();
+    applyRoleModeUI();
     renderAll();
+    startCloudRealtimeSync();
   });
 })();
