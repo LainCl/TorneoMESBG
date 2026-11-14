@@ -2096,8 +2096,7 @@
     const btnCopyRoomCode = document.getElementById('btnCopyRoomCode');
     if (btnCopyRoomCode) {
       btnCopyRoomCode.addEventListener('click', () => {
-        const dbParam = getFirebaseDbUrl() ? `&db=${encodeURIComponent(getFirebaseDbUrl())}` : '';
-        const inviteUrl = `${window.location.origin}${window.location.pathname}?code=${state.roomCode}${dbParam}`;
+        const inviteUrl = `${window.location.origin}${window.location.pathname}?code=${state.roomCode}`;
         navigator.clipboard.writeText(inviteUrl);
         showToast(`📋 Código ${state.roomCode} y link de seguimiento copiados al portapapeles.`);
       });
@@ -2144,7 +2143,7 @@
       });
     }
 
-    // Sincronización instantánea entre pestañas del mismo navegador (Modo Local o Nube)
+    // Sincronización instantánea entre pestañas del mismo navegador
     window.addEventListener('storage', (e) => {
       if (e.key === ROOMS_REGISTRY_KEY && state && state.roomCode) {
         const updatedRoom = getRoomFromLocalRegistry(state.roomCode);
@@ -2158,16 +2157,13 @@
   }
 
   function openAdminAndCloudModal() {
-    const currentDbUrl = getFirebaseDbUrl();
-    const shareUrl = currentDbUrl
-      ? `${window.location.origin}${window.location.pathname}?code=${state.roomCode}&db=${encodeURIComponent(currentDbUrl)}`
-      : `${window.location.origin}${window.location.pathname}?code=${state.roomCode}`;
+    const shareUrl = `${window.location.origin}${window.location.pathname}?code=${state.roomCode}`;
 
     openModal(
-      'Modo Organizador y Seguimiento en Vivo (Companion)',
+      'Modo Organizador y Sala de Torneo',
       `
-        <h4>1. Sala de Torneo Activa: <span style="color:var(--gold-bright); letter-spacing:0.12em;">${escapeHtml(state.roomCode || '------')}</span></h4>
-        <p style="margin-bottom:10px;">
+        <h4>Sala de Torneo Activa: <span style="color:var(--gold-bright); letter-spacing:0.12em;">${escapeHtml(state.roomCode || '------')}</span></h4>
+        <p style="margin-bottom:12px;">
           Estado actual en este dispositivo: <strong style="color:var(--gold-bright);">${
             isAdminMode
               ? '🔓 Modo Organizador (Edición habilitada)'
@@ -2176,39 +2172,22 @@
         </p>
         ${
           !isAdminMode
-            ? `<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:16px;">
-                <input type="password" id="inputAdminPin" placeholder="Ingresa clave de organizador..." style="min-width:220px;" />
+            ? `<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:18px;">
+                <input type="password" id="inputAdminPin" placeholder="Ingresa clave de organizador..." style="min-width:200px; flex:1;" />
                 <button type="button" class="btn-gold-cta btn-sm" id="btnUnlockAdmin">🔓 Desbloquear Organizador</button>
               </div>`
-            : `<div style="margin-bottom:16px;">
+            : `<div style="margin-bottom:18px;">
                 <button type="button" class="btn-elven-outline btn-sm" id="btnLockToSpectator">👁️ Cambiar a Vista Jugador (Previsualizar)</button>
               </div>`
         }
 
-        <div style="background:rgba(9,17,15,0.85); border:1px solid var(--border-gold); border-radius:10px; padding:10px 12px; margin-bottom:14px;">
-          <span class="stat-label">CÓDIGO Y LINK DE INVITACIÓN PARA JUGADORES (ESTILO COMPANION):</span>
-          <div style="display:flex; gap:8px; align-items:center; margin-top:4px;">
-            <input type="text" readonly value="${escapeHtml(shareUrl)}" id="inputSharePlayerLink" style="flex:1; font-size:0.78rem;" />
+        <div style="background:rgba(9,17,15,0.85); border:1px solid var(--border-gold); border-radius:10px; padding:12px 14px;">
+          <span class="stat-label">LINK DE INVITACIÓN PARA JUGADORES (ID: ${escapeHtml(state.roomCode || '------')}):</span>
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:6px;">
+            <input type="text" readonly value="${escapeHtml(shareUrl)}" id="inputSharePlayerLink" style="flex:1; min-width:180px; font-size:0.78rem;" />
             <button type="button" class="btn-elven-outline btn-sm" id="btnCopyShareLink">📋 Copiar Link</button>
           </div>
         </div>
-
-        <h4>2. Base de Datos en Tiempo Real (Firebase Realtime Database)</h4>
-        <p class="helper-caption" style="margin-bottom:8px;">
-          Conecta una URL de <strong>Firebase Realtime Database</strong> para que cualquier jugador que ingrese el código <strong>${escapeHtml(state.roomCode || '')}</strong> desde su celular vea las rondas, mesas y el podio en tiempo real:
-        </p>
-        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:12px;">
-          <input type="text" id="inputFirebaseDbUrl" value="${escapeHtml(currentDbUrl)}" placeholder="https://tu-proyecto-default-rtdb.firebaseio.com" style="flex:1; min-width:260px;" />
-          <button type="button" class="btn-gold-cta btn-sm" id="btnSaveFirebaseUrl">☁️ Conectar y Publicar</button>
-        </div>
-
-        <h4>¿Cómo activar la nube para todos los celulares en 1 minuto?</h4>
-        <ul>
-          <li>Entra a <a href="https://console.firebase.google.com/" target="_blank" rel="noopener" style="color:var(--gold-bright);">console.firebase.google.com</a> y crea un proyecto gratuito.</li>
-          <li>En el menú izquierdo ve a <strong>Compilación → Realtime Database → Crear base de datos</strong>.</li>
-          <li>Elige <strong>Comenzar en modo de prueba</strong> y copia la URL que aparece arriba (termina en <code>.firebaseio.com</code> o <code>.firebasedatabase.app</code>).</li>
-          <li>Pégala arriba (o dentro del archivo <code>cloudConfig.js</code> de tu repositorio para que quede configurada para todos los torneos).</li>
-        </ul>
       `
     );
 
@@ -2237,29 +2216,6 @@
         applyRoleModeUI();
         closeModal();
         showToast('🔒 Vista Jugador activada (solo lectura de Rondas, Mesas y Podio).');
-      });
-    }
-
-    const btnSaveDb = document.getElementById('btnSaveFirebaseUrl');
-    if (btnSaveDb) {
-      btnSaveDb.addEventListener('click', async () => {
-        const rawUrl = (document.getElementById('inputFirebaseDbUrl')?.value || '').trim().replace(/\/+$/, '');
-        if (!rawUrl) {
-          localStorage.removeItem(FIREBASE_URL_STORAGE_KEY);
-          startCloudRealtimeSync();
-          closeModal();
-          showToast('Sincronización en nube desactivada (Modo Local).');
-          return;
-        }
-        if (!rawUrl.startsWith('https://')) {
-          showToast('⚠️ La URL debe comenzar con https://');
-          return;
-        }
-        localStorage.setItem(FIREBASE_URL_STORAGE_KEY, rawUrl);
-        await pushStateToCloud();
-        startCloudRealtimeSync();
-        openAdminAndCloudModal();
-        showToast('☁️ Conectado a Firebase y torneo publicado en vivo.');
       });
     }
 
@@ -2797,8 +2753,8 @@
 
     ctx.textAlign = 'center';
     ctx.fillStyle = '#ebd79a';
-    ctx.font = '700 22px Cinzel, serif';
-    ctx.fillText('▶ YOUTUBE: @DeAzul_boardgames   •   📸 IG: @comunidad_mesbg_cl', W / 2, 1826);
+    ctx.font = '700 20px Cinzel, serif';
+    ctx.fillText('▶ YT: @DeAzul_boardgames   •   📸 IG: @lain_cl   •   📸 IG: @comunidad_mesbg_cl', W / 2, 1826);
 
     ctx.fillStyle = '#94a69e';
     ctx.font = '600 18px Cinzel, serif';

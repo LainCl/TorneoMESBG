@@ -1964,40 +1964,392 @@ body.spectator-mode .match-card .match-table-input {
   display: none !important;
 }
 
-/* Responsividad */
+/* ==========================================================================
+   RESPONSIVIDAD COMPLETA (TABLETS Y CELULARES)
+   ========================================================================== */
+.table-responsive {
+  -webkit-overflow-scrolling: touch;
+}
+
 @media (max-width: 1120px) {
   .app-layout {
     grid-template-columns: 1fr;
-    padding: 46px 44px 54px;
+    padding: 20px 28px 36px;
+    gap: 20px;
   }
+
   .lore-Column {
     position: static;
+    padding: 8px 4px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    align-items: stretch;
   }
+
+  .moon-crest,
+  .hero-typography {
+    grid-column: 1 / -1;
+  }
+
+  .hero-subtitle {
+    margin-bottom: 6px;
+  }
+
+  .CompanionRoomCard,
+  .QuickStatusCard {
+    margin-bottom: 0;
+  }
+
   .podium-showcase {
     grid-template-columns: repeat(2, 1fr);
   }
+
+  .team-clash-top {
+    grid-template-columns: 1fr auto 1fr;
+  }
+
   .fp-layout-grid {
     grid-template-columns: 1fr;
   }
 }
 
-@media (max-width: 720px) {
-  .app-layout {
-    padding: 28px 20px 36px;
+@media (max-width: 768px) {
+  .ornamental-frame {
+    inset: 6px;
   }
+
   .corner-ornament {
-    width: 56px;
-    height: 56px;
-    opacity: 0.55;
+    width: 48px;
+    height: 48px;
+    opacity: 0.45;
   }
-  .category-grid,
-  .celebration-pedestals {
+
+  .bottom-center-ornament {
+    width: 150px;
+    height: 24px;
+  }
+
+  .top-social-bar {
+    gap: 6px;
+    padding: 12px 10px 0;
+  }
+
+  .social-sep {
+    display: none;
+  }
+
+  .ig-link-pill,
+  .live-sync-badge {
+    font-size: 0.68rem;
+    padding: 5px 10px;
+    gap: 5px;
+  }
+
+  .ig-icon {
+    width: 14px;
+    height: 14px;
+  }
+
+  .app-layout {
+    padding: 14px 12px 28px;
+    gap: 16px;
+  }
+
+  .lore-Column {
     grid-template-columns: 1fr;
+    gap: 12px;
+    padding: 4px 0;
   }
+
+  .moon-crest {
+    gap: 12px;
+    margin-bottom: 6px;
+  }
+
+  .deazul-logo {
+    width: 76px;
+    height: 76px;
+  }
+
+  .community-logo {
+    width: 80px;
+  }
+
+  .carved-title span {
+    font-size: clamp(1.75rem, 7vw, 2.3rem);
+  }
+
+  .elven-divider {
+    width: 165px;
+    margin: 4px auto 8px;
+  }
+
+  .hero-subtitle {
+    font-size: 1.2rem;
+    margin-bottom: 4px;
+  }
+
+  .CompanionRoomCard,
+  .QuickStatusCard {
+    padding: 12px 14px;
+    border-radius: 14px;
+  }
+
+  .companion-code-display {
+    font-size: 1.4rem;
+    padding: 8px 10px;
+    letter-spacing: 0.22em;
+    margin-bottom: 10px;
+  }
+
+  .companion-join-row input[type="text"] {
+    min-width: 0;
+    font-size: 0.82rem;
+  }
+
+  .elven-device-frame {
+    padding: 16px 12px 20px;
+    border-radius: 18px;
+  }
+
+  .device-topbar {
+    grid-template-columns: 38px 1fr 38px;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+
+  body.spectator-mode .device-topbar {
+    grid-template-columns: 1fr 38px;
+  }
+
+  .topbar-back-btn,
+  .topbar-help-btn {
+    width: 36px;
+    height: 36px;
+  }
+
+  .topbar-title-box {
+    padding: 8px 10px;
+    font-size: 0.82rem;
+    letter-spacing: 0.08em;
+  }
+
+  .category-grid {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+  }
+
+  body.spectator-mode .category-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .category-card {
+    min-height: 76px;
+    padding: 12px 6px;
+    gap: 6px;
+    border-radius: 10px;
+  }
+
+  .cat-title {
+    font-size: 0.66rem;
+    letter-spacing: 0.04em;
+  }
+
+  .elven-block {
+    padding: 14px 12px;
+    border-radius: 12px;
+    margin-bottom: 14px;
+  }
+
   .difficulty-grid,
   .difficulty-grid.two-cols,
-  .podium-showcase,
   .cta-secondary-row {
     grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .params-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .block-header-flex {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .inline-add-group {
+    width: 100%;
+  }
+
+  .inline-add-group input[type="text"] {
+    min-width: 0;
+    flex: 1;
+    width: 100%;
+  }
+
+  .round-tabs-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .round-pills-bar {
+    width: 100%;
+  }
+
+  .round-pill-btn {
+    flex: 1 1 auto;
+    text-align: center;
+    padding: 8px 10px;
+    font-size: 0.74rem;
+  }
+
+  .round-Macro-toolbar {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .round-Macro-toolbar .btn-gold-cta,
+  .round-Macro-toolbar .btn-finish-round {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .match-card-header {
+    padding: 8px 12px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .match-table-input {
+    width: 96px;
+    font-size: 0.8rem !important;
+  }
+
+  .player-select {
+    min-width: 140px;
+    font-size: 0.78rem !important;
+  }
+
+  .team-clash-top {
+    grid-template-columns: 1fr;
+    text-align: center;
+    gap: 8px;
+  }
+
+  .podium-showcase {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+
+  .medal-card {
+    padding: 12px 10px;
+  }
+
+  .medal-name {
+    font-size: 0.92rem;
+  }
+
+  .elven-modal-backdrop {
+    padding: 12px;
+  }
+
+  .elven-modal-card {
+    border-radius: 14px;
+    max-height: 90vh;
+  }
+
+  .modal-header {
+    padding: 14px 16px;
+    font-size: 0.9rem;
+  }
+
+  .modal-body {
+    padding: 16px;
+    font-size: 0.84rem;
+  }
+
+  .celebration-overlay {
+    padding: 12px;
+    align-items: flex-start;
+  }
+
+  .celebration-stage {
+    padding: 24px 14px 20px;
+    border-radius: 18px;
+    margin: auto 0;
+  }
+
+  .celebration-pedestals {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .pedestal-column.rank-1 {
+    order: -1;
+  }
+
+  .pedestal-column.rank-1 .pedestal-box,
+  .pedestal-column.rank-2 .pedestal-box,
+  .pedestal-column.rank-3 .pedestal-box {
+    min-height: auto;
+    padding: 14px 12px;
+  }
+
+  .celebration-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .celebration-actions button {
+    width: 100% !important;
+    justify-content: center;
+  }
+
+  .toast-container {
+    left: 12px;
+    right: 12px;
+    bottom: 14px;
+  }
+
+  .elven-toast {
+    width: 100%;
+    text-align: center;
+  }
+}
+
+@media (max-width: 480px) {
+  .category-grid {
+    grid-template-columns: 1fr;
+  }
+
+  body.spectator-mode .category-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .params-grid,
+  .podium-showcase,
+  .round-Macro-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .companion-top-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  .companion-code-actions {
+    width: 100%;
+  }
+
+  .companion-mini-btn {
+    flex: 1;
+    text-align: center;
+    padding: 5px 8px;
   }
 }
