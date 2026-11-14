@@ -30,10 +30,19 @@
     return code;
   }
 
+  function getOwnedRooms() {
+    try {
+      const list = JSON.parse(localStorage.getItem(OWNED_ROOMS_KEY) || '[]');
+      return Array.isArray(list) ? list : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
   function markRoomAsOwned(roomCode) {
     if (!roomCode) return;
     try {
-      const list = JSON.parse(localStorage.getItem(OWNED_ROOMS_KEY) || '[]');
+      const list = getOwnedRooms();
       if (!list.includes(roomCode)) {
         list.push(roomCode);
         localStorage.setItem(OWNED_ROOMS_KEY, JSON.stringify(list));
@@ -45,12 +54,61 @@
 
   function isRoomOwnedByMe(roomCode) {
     if (!roomCode) return false;
-    try {
-      const list = JSON.parse(localStorage.getItem(OWNED_ROOMS_KEY) || '[]');
-      return list.includes(roomCode);
-    } catch (e) {
-      return false;
+    return getOwnedRooms().includes(roomCode);
+  }
+
+  function normalizeState(s) {
+    if (!s || typeof s !== 'object') return buildCleanInitialState();
+    s.roomCode = (s.roomCode || generateRoomCode()).toUpperCase();
+    s.tournamentName = s.tournamentName || 'Torneo MESBG';
+    s.mode = s.mode || 'individual';
+    s.scoringSystem = s.scoringSystem || 'expanded';
+    s.totalRounds = Math.max(1, Number(s.totalRounds) || 4);
+    s.totalTables = Math.max(1, Number(s.totalTables) || 6);
+    s.teamCount = Math.max(2, Number(s.teamCount) || 4);
+    s.membersPerTeam = Math.max(2, Number(s.membersPerTeam) || 4);
+    s.tablesPerTeam = Math.max(1, Number(s.tablesPerTeam) || 4);
+    s.activeRound = Math.max(1, Number(s.activeRound) || 1);
+    s.players = Array.isArray(s.players) ? s.players : [];
+    s.teams = Array.isArray(s.teams)
+      ? s.teams.map((t, i) => ({
+          name: t && t.name ? t.name : `Equipo_${i + 1}`,
+          members: Array.isArray(t && t.members) ? t.members : []
+        }))
+      : createDefaultTeams(s.teamCount, s.membersPerTeam);
+    s.tableGroups = Array.isArray(s.tableGroups)
+      ? s.tableGroups.map((g, i) => ({
+          name: g && g.name ? g.name : `Grupo_${i + 1}`,
+          tables: Array.isArray(g && g.tables) ? g.tables : []
+        }))
+      : createTableGroups(s.totalTables, s.tablesPerTeam);
+
+    if (!Array.isArray(s.rounds)) {
+      s.rounds = [];
     }
+    for (let r = 1; r <= s.totalRounds; r++) {
+      let rObj = s.rounds.find((x) => x && Number(x.round) === r);
+      if (!rObj) {
+        rObj = {
+          round: r,
+          paired: false,
+          finished: false,
+          podiumUpdated: false,
+          teamClashes: [],
+          matches: []
+        };
+        s.rounds.push(rObj);
+      } else {
+        rObj.matches = Array.isArray(rObj.matches) ? rObj.matches : [];
+        rObj.teamClashes = Array.isArray(rObj.teamClashes) ? rObj.teamClashes : [];
+      }
+    }
+    s.rounds.sort((a, b) => Number(a.round) - Number(b.round));
+    return s;
+  }
+
+  function ensureConsistency() {
+    state = normalizeState(state);
   }
 
   function saveRoomToLocalRegistry(tournamentState) {
@@ -183,8 +241,8 @@
     // Si el usuario entra mediante un link con ?code=XXXXXX
     if (urlCodeParam) {
       const localMatch = getRoomFromLocalRegistry(urlCodeParam);
-      if (localMatch && Array.isArray(localMatch.rounds)) {
-        state = localMatch;
+      if (localMatch && typeof localMatch === 'object') {
+        state = normalizeState(localMatch);
       } else {
         state = buildCleanInitialState(urlCodeParam);
       }
@@ -197,12 +255,12 @@
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (parsed && Array.isArray(parsed.rounds)) {
+        if (parsed && typeof parsed === 'object') {
           if (!parsed.roomCode) {
             parsed.roomCode = generateRoomCode();
             markRoomAsOwned(parsed.roomCode);
           }
-          state = parsed;
+          state = normalizeState(parsed);
           saveRoomToLocalRegistry(state);
           // Si este navegador no tiene ninguna sala propia aún y no entró con ?code, es dueño de su sala inicial
           if (getOwnedRooms().length === 0) {
@@ -287,12 +345,14 @@
       const res = await fetch(endpoint);
       if (!res.ok) return false;
       const remoteData = await res.json();
-      if (remoteData && Array.isArray(remoteData.rounds)) {
+      if (remoteData && typeof remoteData === 'object' && (remoteData.roomCode || Array.isArray(remoteData.rounds))) {
+        const cleanRemote = normalizeState(remoteData);
         const localTime = Number(state.updatedAt || 0);
-        const remoteTime = Number(remoteData.updatedAt || 0);
-        if (!isAdminMode || remoteTime > localTime || state.players.length === 0) {
+        const remoteTime = Number(cleanRemote.updatedAt || 0);
+        const localPlayersCount = Array.isArray(state.players) ? state.players.length : 0;
+        if (!isAdminMode || remoteTime > localTime || localPlayersCount === 0) {
           isApplyingRemoteUpdate = true;
-          state = remoteData;
+          state = cleanRemote;
           localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
           saveRoomToLocalRegistry(state);
           renderAll();
@@ -309,6 +369,7 @@
       updateLiveSyncBadge(`🟢 SALA ${state.roomCode}`, true);
       return false;
     } catch (err) {
+      console.warn('Error en pullStateFromCloud:', err);
       updateLiveSyncBadge('⚠️ SIN CONEXIÓN', false);
       return false;
     }
@@ -328,9 +389,9 @@
         const res = await fetch(endpoint);
         if (res.ok) {
           const remoteData = await res.json();
-          if (remoteData && Array.isArray(remoteData.rounds)) {
+          if (remoteData && typeof remoteData === 'object' && (remoteData.roomCode || Array.isArray(remoteData.rounds))) {
             isApplyingRemoteUpdate = true;
-            state = remoteData;
+            state = normalizeState(remoteData);
             state.roomCode = code;
             isAdminMode = isRoomOwnedByMe(code);
             localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -354,9 +415,9 @@
 
     // Buscar en el registro local del navegador (útil en modo local o entre pestañas)
     const localRoom = getRoomFromLocalRegistry(code);
-    if (localRoom && Array.isArray(localRoom.rounds)) {
+    if (localRoom && typeof localRoom === 'object') {
       isApplyingRemoteUpdate = true;
-      state = localRoom;
+      state = normalizeState(localRoom);
       state.roomCode = code;
       isAdminMode = isRoomOwnedByMe(code);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -398,12 +459,13 @@
       sse.addEventListener('put', (ev) => {
         try {
           const payload = JSON.parse(ev.data);
-          if (payload && payload.data && Array.isArray(payload.data.rounds)) {
-            const remoteTime = Number(payload.data.updatedAt || 0);
+          if (payload && payload.data && typeof payload.data === 'object') {
+            const cleanRemote = normalizeState(payload.data);
+            const remoteTime = Number(cleanRemote.updatedAt || 0);
             const localTime = Number(state.updatedAt || 0);
             if (remoteTime >= localTime || !isAdminMode) {
               isApplyingRemoteUpdate = true;
-              state = payload.data;
+              state = cleanRemote;
               localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
               saveRoomToLocalRegistry(state);
               renderAll();
