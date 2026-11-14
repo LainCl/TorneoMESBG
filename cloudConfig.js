@@ -7,8 +7,8 @@
  *    o configúrala directamente desde el botón "🔒 Organizador" dentro de la aplicación.
  */
 window.MESBG_CLOUD_CONFIG = {
-  // URL de tu Firebase Realtime Database (dejar vacío si se configura desde la interfaz)
-  FIREBASE_DB_URL: '',
+  // URL de tu Firebase Realtime Database (conectada por defecto para todos los dispositivos)
+  FIREBASE_DB_URL: 'https://torneomesbg-default-rtdb.firebaseio.com',
 
   // Clave / PIN para desbloquear el Modo Organizador (crear torneo, emparejar y editar puntajes)
   ADMIN_PIN: 'deazul2026'

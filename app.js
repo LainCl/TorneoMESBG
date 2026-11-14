@@ -304,6 +304,11 @@
         updateLiveSyncBadge(`🟢 SALA ${state.roomCode}`, true);
         return true;
       }
+      // Si la sala aún no existe en Firebase y este navegador es el organizador, publicarla automáticamente
+      if (isAdminMode && state && Array.isArray(state.rounds)) {
+        await pushStateToCloud();
+        return true;
+      }
       updateLiveSyncBadge(`🟢 SALA ${state.roomCode}`, true);
       return false;
     } catch (err) {
