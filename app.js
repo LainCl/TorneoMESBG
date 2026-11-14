@@ -188,8 +188,7 @@
       } else {
         state = buildCleanInitialState(urlCodeParam);
       }
-      const unlockedSession = sessionStorage.getItem(ADMIN_SESSION_KEY) === 'true';
-      isAdminMode = unlockedSession || isRoomOwnedByMe(urlCodeParam);
+      isAdminMode = isRoomOwnedByMe(urlCodeParam);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
       return;
     }
@@ -205,10 +204,11 @@
           }
           state = parsed;
           saveRoomToLocalRegistry(state);
-          const isLocalhost =
-            window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-          const unlockedSession = sessionStorage.getItem(ADMIN_SESSION_KEY) === 'true';
-          isAdminMode = isLocalhost || unlockedSession || isRoomOwnedByMe(state.roomCode);
+          // Si este navegador no tiene ninguna sala propia aún y no entró con ?code, es dueño de su sala inicial
+          if (getOwnedRooms().length === 0) {
+            markRoomAsOwned(state.roomCode);
+          }
+          isAdminMode = isRoomOwnedByMe(state.roomCode);
           return;
         }
       }
@@ -218,10 +218,7 @@
 
     state = buildCleanInitialState();
     markRoomAsOwned(state.roomCode);
-    const isLocalhost =
-      window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-    const unlockedSession = sessionStorage.getItem(ADMIN_SESSION_KEY) === 'true';
-    isAdminMode = isLocalhost || unlockedSession;
+    isAdminMode = true;
     saveState();
   }
 
@@ -335,14 +332,18 @@
             isApplyingRemoteUpdate = true;
             state = remoteData;
             state.roomCode = code;
-            isAdminMode = isRoomOwnedByMe(code) || sessionStorage.getItem(ADMIN_SESSION_KEY) === 'true';
+            isAdminMode = isRoomOwnedByMe(code);
             localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
             saveRoomToLocalRegistry(state);
             applyRoleModeUI();
-            switchTab('rounds');
+            switchTab(isAdminMode ? 'setup' : 'rounds');
             startCloudRealtimeSync();
             isApplyingRemoteUpdate = false;
-            showToast(`✅ Conectado al torneo "${state.tournamentName}" (ID: ${code}).`);
+            showToast(
+              isAdminMode
+                ? `👑 Conectado como Host a tu torneo "${state.tournamentName}" (ID: ${code}).`
+                : `👁️ Conectado como Jugador al torneo "${state.tournamentName}" (ID: ${code}).`
+            );
             return;
           }
         }
@@ -357,13 +358,17 @@
       isApplyingRemoteUpdate = true;
       state = localRoom;
       state.roomCode = code;
-      isAdminMode = isRoomOwnedByMe(code) || sessionStorage.getItem(ADMIN_SESSION_KEY) === 'true';
+      isAdminMode = isRoomOwnedByMe(code);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
       applyRoleModeUI();
-      switchTab('rounds');
+      switchTab(isAdminMode ? 'setup' : 'rounds');
       startCloudRealtimeSync();
       isApplyingRemoteUpdate = false;
-      showToast(`✅ Torneo "${state.tournamentName}" (ID: ${code}) cargado.`);
+      showToast(
+        isAdminMode
+          ? `👑 Torneo "${state.tournamentName}" (ID: ${code}) cargado en Modo Host.`
+          : `👁️ Torneo "${state.tournamentName}" (ID: ${code}) cargado en Vista Jugador.`
+      );
       return;
     }
 
@@ -422,7 +427,14 @@
     document.body.classList.toggle('spectator-mode', !isAdminMode);
     const btn = document.getElementById('btnToggleAdminMode');
     if (btn) {
-      btn.textContent = isAdminMode ? '🔓 Modo Organizador' : '🔒 Vista Jugador';
+      const iOwnThisRoom = isRoomOwnedByMe(state.roomCode);
+      if (isAdminMode) {
+        btn.textContent = '👑 Host del Torneo';
+      } else if (iOwnThisRoom) {
+        btn.textContent = '👁️ Vista Jugador (Host)';
+      } else {
+        btn.textContent = '👁️ Vista Jugador';
+      }
       btn.classList.toggle('is-admin', isAdminMode);
     }
 
@@ -2106,25 +2118,7 @@
     const btnNewRoomCode = document.getElementById('btnNewRoomCode');
     if (btnNewRoomCode) {
       btnNewRoomCode.addEventListener('click', () => {
-        openConfirmModal(
-          'Crear Nueva Sala de Torneo',
-          '¿Deseas crear un nuevo torneo con un nuevo código de sala (estilo Companion)? El torneo actual quedará guardado bajo su código actual.',
-          '➕ Crear Nueva Sala',
-          async () => {
-            const newCode = generateRoomCode();
-            state = createFreshState();
-            state.roomCode = newCode;
-            ensureConsistency();
-            markRoomAsOwned(newCode);
-            isAdminMode = true;
-            sessionStorage.setItem(ADMIN_SESSION_KEY, 'true');
-            saveState();
-            startCloudRealtimeSync();
-            applyRoleModeUI();
-            renderAll();
-            showToast(`✨ Nueva sala creada con el código ${newCode}.`);
-          }
-        );
+        promptCreateNewRoom();
       });
     }
 
@@ -2156,30 +2150,63 @@
     });
   }
 
+  function promptCreateNewRoom() {
+    openConfirmModal(
+      'Crear Nuevo Torneo (Nuevo ID)',
+      '¿Deseas levantar un nuevo torneo con un código ID nuevo? Quedarás automáticamente como Host (Organizador) de la nueva sala y el torneo anterior seguirá guardado bajo su propio código.',
+      '➕ Crear Nuevo Torneo',
+      () => {
+        const newCode = generateRoomCode();
+        state = buildCleanInitialState(newCode);
+        ensureConsistency();
+        markRoomAsOwned(newCode);
+        isAdminMode = true;
+        try {
+          window.history.replaceState({}, '', window.location.pathname);
+        } catch (e) {
+          // Ignorar
+        }
+        saveState();
+        startCloudRealtimeSync();
+        applyRoleModeUI();
+        switchTab('setup');
+        renderAll();
+        showToast(`👑 Nueva sala creada con el código ${newCode}. ¡Eres el Host!`);
+      }
+    );
+  }
+
   function openAdminAndCloudModal() {
     const shareUrl = `${window.location.origin}${window.location.pathname}?code=${state.roomCode}`;
+    const iOwnThisRoom = isRoomOwnedByMe(state.roomCode);
 
     openModal(
-      'Modo Organizador y Sala de Torneo',
+      'Sala de Torneo (Estilo Companion)',
       `
-        <h4>Sala de Torneo Activa: <span style="color:var(--gold-bright); letter-spacing:0.12em;">${escapeHtml(state.roomCode || '------')}</span></h4>
-        <p style="margin-bottom:12px;">
-          Estado actual en este dispositivo: <strong style="color:var(--gold-bright);">${
+        <h4>Código de Sala Activo: <span style="color:var(--gold-bright); letter-spacing:0.12em;">${escapeHtml(state.roomCode || '------')}</span></h4>
+        <p style="margin-bottom:14px;">
+          Tu rol en este torneo: <strong style="color:var(--gold-bright);">${
             isAdminMode
-              ? '🔓 Modo Organizador (Edición habilitada)'
-              : '🔒 Vista Jugador (Solo lectura de Rondas, Mesas y Podio)'
+              ? '👑 Host del Torneo (Puedes configurar, emparejar y editar resultados)'
+              : iOwnThisRoom
+              ? '👁️ Vista Jugador (Previsualizando tu propio torneo)'
+              : '👁️ Vista Jugador (Siguiendo en vivo Rondas, Mesas y Podio)'
           }</strong>
         </p>
-        ${
-          !isAdminMode
-            ? `<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:18px;">
-                <input type="password" id="inputAdminPin" placeholder="Ingresa clave de organizador..." style="min-width:200px; flex:1;" />
-                <button type="button" class="btn-gold-cta btn-sm" id="btnUnlockAdmin">🔓 Desbloquear Organizador</button>
-              </div>`
-            : `<div style="margin-bottom:18px;">
-                <button type="button" class="btn-elven-outline btn-sm" id="btnLockToSpectator">👁️ Cambiar a Vista Jugador (Previsualizar)</button>
-              </div>`
-        }
+
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:18px;">
+          ${
+            iOwnThisRoom && isAdminMode
+              ? `<button type="button" class="btn-elven-outline btn-sm" id="btnLockToSpectator">👁️ Previsualizar como Jugador</button>`
+              : ''
+          }
+          ${
+            iOwnThisRoom && !isAdminMode
+              ? `<button type="button" class="btn-gold-cta btn-sm" id="btnReturnToHost">👑 Volver a Modo Host</button>`
+              : ''
+          }
+          <button type="button" class="btn-gold-cta btn-sm" id="btnCreateOwnTournamentFromModal">➕ Crear Nuevo Torneo (Nuevo ID)</button>
+        </div>
 
         <div style="background:rgba(9,17,15,0.85); border:1px solid var(--border-gold); border-radius:10px; padding:12px 14px;">
           <span class="stat-label">LINK DE INVITACIÓN PARA JUGADORES (ID: ${escapeHtml(state.roomCode || '------')}):</span>
@@ -2191,20 +2218,13 @@
       `
     );
 
-    const btnUnlock = document.getElementById('btnUnlockAdmin');
-    if (btnUnlock) {
-      btnUnlock.addEventListener('click', () => {
-        const pinVal = (document.getElementById('inputAdminPin')?.value || '').trim();
-        if (pinVal === getAdminPin()) {
-          isAdminMode = true;
-          markRoomAsOwned(state.roomCode);
-          sessionStorage.setItem(ADMIN_SESSION_KEY, 'true');
-          applyRoleModeUI();
-          closeModal();
-          showToast('🔓 Modo Organizador activado para esta sala.');
-        } else {
-          showToast('⚠️ Clave incorrecta.');
-        }
+    const btnReturnHost = document.getElementById('btnReturnToHost');
+    if (btnReturnHost) {
+      btnReturnHost.addEventListener('click', () => {
+        isAdminMode = true;
+        applyRoleModeUI();
+        closeModal();
+        showToast('👑 Modo Host restaurado.');
       });
     }
 
@@ -2212,10 +2232,17 @@
     if (btnLock) {
       btnLock.addEventListener('click', () => {
         isAdminMode = false;
-        sessionStorage.removeItem(ADMIN_SESSION_KEY);
         applyRoleModeUI();
         closeModal();
-        showToast('🔒 Vista Jugador activada (solo lectura de Rondas, Mesas y Podio).');
+        showToast('👁️ Previsualizando como Jugador (solo lectura).');
+      });
+    }
+
+    const btnCreateNew = document.getElementById('btnCreateOwnTournamentFromModal');
+    if (btnCreateNew) {
+      btnCreateNew.addEventListener('click', () => {
+        closeModal();
+        promptCreateNewRoom();
       });
     }
 
