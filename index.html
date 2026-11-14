@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Torneo MESBG — Gestor de Torneos</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@700;900&family=Cinzel:wght@500;600;700;800&family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- Fondo atmosférico Rivendel nocturno -->
+  <div class="scene-backdrop" aria-hidden="true">
+    <div class="scene-stars"></div>
+    <div class="scene-vignette"></div>
+  </div>
+
+  <!-- Marco ornamental élfico de esquina a esquina -->
+  <div class="ornamental-frame" aria-hidden="true">
+    <!-- Esquina Superior Izquierda -->
+    <svg class="corner-ornament top-left" viewBox="0 0 180 180" fill="none">
+      <path d="M8 170 L8 42 C8 20 20 8 42 8 L170 8" stroke="url(#goldGrad)" stroke-width="1.6"/>
+      <path d="M14 145 L14 46 C14 26 26 14 46 14 L145 14" stroke="url(#goldGrad)" stroke-width="0.9" opacity="0.7"/>
+      <path d="M8 42 C24 42 38 28 38 12 C38 28 52 38 68 38 C52 38 42 52 42 68 C42 52 28 42 8 42 Z" fill="url(#goldGrad)" opacity="0.85"/>
+      <path d="M65 8 C75 20 92 22 108 14 C96 24 98 38 112 42 C94 40 80 28 65 8 Z" fill="url(#goldGrad)" opacity="0.75"/>
+      <path d="M8 65 C20 75 22 92 14 108 C24 96 38 98 42 112 C40 94 28 80 8 65 Z" fill="url(#goldGrad)" opacity="0.75"/>
+      <circle cx="24" cy="24" r="3.5" fill="url(#goldGrad)"/>
+      <defs>
+        <linearGradient id="goldGrad" x1="0" y1="0" x2="180" y2="180" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stop-color="#f0dfb4"/>
+          <stop offset="50%" stop-color="#c6a252"/>
+          <stop offset="100%" stop-color="#7c622b"/>
+        </linearGradient>
+      </defs>
+    </svg>
+    <!-- Esquina Superior Derecha -->
+    <svg class="corner-ornament top-right" viewBox="0 0 180 180" fill="none">
+      <path d="M8 170 L8 42 C8 20 20 8 42 8 L170 8" stroke="url(#goldGrad)" stroke-width="1.6"/>
+      <path d="M14 145 L14 46 C14 26 26 14 46 14 L145 14" stroke="url(#goldGrad)" stroke-width="0.9" opacity="0.7"/>
+      <path d="M8 42 C24 42 38 28 38 12 C38 28 52 38 68 38 C52 38 42 52 42 68 C42 52 28 42 8 42 Z" fill="url(#goldGrad)" opacity="0.85"/>
+      <path d="M65 8 C75 20 92 22 108 14 C96 24 98 38 112 42 C94 40 80 28 65 8 Z" fill="url(#goldGrad)" opacity="0.75"/>
+      <path d="M8 65 C20 75 22 92 14 108 C24 96 38 98 42 112 C40 94 28 80 8 65 Z" fill="url(#goldGrad)" opacity="0.75"/>
+      <circle cx="24" cy="24" r="3.5" fill="url(#goldGrad)"/>
+    </svg>
+    <!-- Esquina Inferior Izquierda -->
+    <svg class="corner-ornament bottom-left" viewBox="0 0 180 180" fill="none">
+      <path d="M8 170 L8 42 C8 20 20 8 42 8 L170 8" stroke="url(#goldGrad)" stroke-width="1.6"/>
+      <path d="M14 145 L14 46 C14 26 26 14 46 14 L145 14" stroke="url(#goldGrad)" stroke-width="0.9" opacity="0.7"/>
+      <path d="M8 42 C24 42 38 28 38 12 C38 28 52 38 68 38 C52 38 42 52 42 68 C42 52 28 42 8 42 Z" fill="url(#goldGrad)" opacity="0.85"/>
+      <path d="M65 8 C75 20 92 22 108 14 C96 24 98 38 112 42 C94 40 80 28 65 8 Z" fill="url(#goldGrad)" opacity="0.75"/>
+      <path d="M8 65 C20 75 22 92 14 108 C24 96 38 98 42 112 C40 94 28 80 8 65 Z" fill="url(#goldGrad)" opacity="0.75"/>
+      <circle cx="24" cy="24" r="3.5" fill="url(#goldGrad)"/>
+    </svg>
+    <!-- Esquina Inferior Derecha -->
+    <svg class="corner-ornament bottom-right" viewBox="0 0 180 180" fill="none">
+      <path d="M8 170 L8 42 C8 20 20 8 42 8 L170 8" stroke="url(#goldGrad)" stroke-width="1.6"/>
+      <path d="M14 145 L14 46 C14 26 26 14 46 14 L145 14" stroke="url(#goldGrad)" stroke-width="0.9" opacity="0.7"/>
+      <path d="M8 42 C24 42 38 28 38 12 C38 28 52 38 68 38 C52 38 42 52 42 68 C42 52 28 42 8 42 Z" fill="url(#goldGrad)" opacity="0.85"/>
+      <path d="M65 8 C75 20 92 22 108 14 C96 24 98 38 112 42 C94 40 80 28 65 8 Z" fill="url(#goldGrad)" opacity="0.75"/>
+      <path d="M8 65 C20 75 22 92 14 108 C24 96 38 98 42 112 C40 94 28 80 8 65 Z" fill="url(#goldGrad)" opacity="0.75"/>
+      <circle cx="24" cy="24" r="3.5" fill="url(#goldGrad)"/>
+    </svg>
+    <!-- Ornamento Central Inferior -->
+    <svg class="bottom-center-ornament" viewBox="0 0 240 40" fill="none">
+      <line x1="0" y1="28" x2="95" y2="28" stroke="url(#goldGrad)" stroke-width="1.2"/>
+      <line x1="145" y1="28" x2="240" y2="28" stroke="url(#goldGrad)" stroke-width="1.2"/>
+      <path d="M120 4 L128 20 L144 28 L128 32 L120 40 L112 32 L96 28 L112 20 Z" fill="url(#goldGrad)"/>
+      <circle cx="88" cy="28" r="2.5" fill="#d8b96c"/>
+      <circle cx="152" cy="28" r="2.5" fill="#d8b96c"/>
+    </svg>
+  </div>
+
+  <!-- Barra Superior de Redes Sociales -->
+  <div class="top-social-bar">
+    <a href="https://www.youtube.com/@DeAzul_boardgames" target="_blank" rel="noopener noreferrer" class="ig-link-pill">
+      <svg class="ig-icon" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
+      </svg>
+      <span>@DeAzul_boardgames</span>
+    </a>
+    <span class="social-sep">✦</span>
+    <a href="https://www.instagram.com/comunidad_mesbg_cl/" target="_blank" rel="noopener noreferrer" class="ig-link-pill">
+      <svg class="ig-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect>
+        <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path>
+        <line x1="17.5" y1="6.5" x2="17.51" y2="6.5"></line>
+      </svg>
+      <span>@comunidad_mesbg_cl</span>
+    </a>
+  </div>
+
+  <!-- Layout Principal -->
+  <div class="app-layout">
+    <!-- Columna Izquierda: Hero & Estado del Torneo -->
+    <aside class="lore-Column">
+      <div class="moon-crest">
+        <img src="assets/logo-deazul.png" alt="DeAzul Boardgames" class="deazul-logo" />
+        <img src="assets/logo-comunidad.png" alt="MESBG Comunidad Chile" class="community-logo" onerror="this.style.display='none'" />
+      </div>
+
+      <div class="hero-typography">
+        <h1 class="carved-title">
+          <span>TORNEO</span>
+          <span>MESBG</span>
+        </h1>
+
+        <!-- Divisor ornamental élfico -->
+        <div class="elven-divider" aria-hidden="true">
+          <svg viewBox="0 0 220 24" fill="none">
+            <line x1="10" y1="12" x2="86" y2="12" stroke="#c8a85c" stroke-width="1.2" opacity="0.75"/>
+            <line x1="134" y1="12" x2="210" y2="12" stroke="#c8a85c" stroke-width="1.2" opacity="0.75"/>
+            <polygon points="110,2 118,12 110,22 102,12" fill="#dfc47e"/>
+            <polygon points="94,7 99,12 94,17 89,12" fill="#c8a85c" opacity="0.8"/>
+            <polygon points="126,7 131,12 126,17 121,12" fill="#c8a85c" opacity="0.8"/>
+          </svg>
+        </div>
+
+        <p class="hero-subtitle">Comunidad MESBG Chile</p>
+      </div>
+
+      <!-- Tarjeta de Resumen en Vivo del Torneo -->
+      <div class="QuickStatusCard">
+        <div class="status-header">
+          <span class="status-dot"></span>
+          <span id="sidebarTournamentName">TORNEO MESBG</span>
+        </div>
+        <div class="status-grid">
+          <div class="status-stat">
+            <span class="stat-label">PARTICIPANTES</span>
+            <strong class="stat-val" id="statActivePlayers">0 / 0</strong>
+          </div>
+          <div class="status-stat">
+            <span class="stat-label">RONDAS</span>
+            <strong class="stat-val" id="statRounds">0 / 4</strong>
+          </div>
+          <div class="status-stat">
+            <span class="stat-label">MESAS</span>
+            <strong class="stat-val" id="statTables">6</strong>
+          </div>
+          <div class="status-stat">
+            <span class="stat-label">LÍDER ACTUAL</span>
+            <strong class="stat-val gold-text" id="statLeader">Sin datos</strong>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Columna Derecha: Consola Principal Enmarcada -->
+    <main class="console-wrapper">
+      <div class="elven-device-frame">
+        <!-- Barra Superior con Botón Volver y Título Enmarcado -->
+        <header class="device-topbar">
+          <button class="topbar-back-btn" id="btnGoHome" title="Ir a Configuración / Inicio">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M19 12H5M12 19l-7-7 7-7"/>
+            </svg>
+          </button>
+          <div class="topbar-title-box">
+            <span id="topbarTitleText">TORNEO TIERRA MEDIA</span>
+          </div>
+          <button class="topbar-help-btn" id="btnOpenRulesModal" title="Ver reglas de puntuación">
+            ?
+          </button>
+        </header>
+
+        <!-- Selector de Categoría / Módulo -->
+        <section class="module-nav-section">
+          <div class="section-label-row">
+            <span class="elven-section-label">MÓDULO DE GESTIÓN</span>
+            <span class="mode-pill" id="badgeCurrentMode">Duelos Individuales • Expandido</span>
+          </div>
+
+          <nav class="category-grid" aria-label="Navegación principal">
+            <button class="category-card active" data-tab="setup">
+              <div class="cat-icon">
+                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+                  <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                  <circle cx="9" cy="7" r="4"/>
+                  <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+                  <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+                </svg>
+              </div>
+              <span class="cat-title">INSCRIPCIÓN Y TORNEO</span>
+            </button>
+
+            <button class="category-card" data-tab="rounds">
+              <div class="cat-icon">
+                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+                  <path d="M14.5 17.5L3 6V3h3l11.5 11.5"/>
+                  <path d="M13 19l6-6"/>
+                  <path d="M16 16l4 4"/>
+                  <path d="M19 21l2-2"/>
+                  <path d="M9.5 17.5L21 6V3h-3L6.5 14.5"/>
+                  <path d="M11 19l-6-6"/>
+                  <path d="M8 16l-4 4"/>
+                  <path d="M5 21l-2-2"/>
+                </svg>
+              </div>
+              <span class="cat-title">RONDAS Y MESAS</span>
+            </button>
+
+            <button class="category-card" data-tab="podium">
+              <div class="cat-icon">
+                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+                  <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/>
+                  <path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/>
+                  <path d="M4 22h16"/>
+                  <path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/>
+                  <path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/>
+                  <path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/>
+                </svg>
+              </div>
+              <span class="cat-title">PODIO Y RESUMEN</span>
+            </button>
+          </nav>
+        </section>
+
+        <!-- ======================================================== -->
+        <!-- VISTA 1: INSCRIPCIÓN Y CONFIGURACIÓN DEL TORNEO           -->
+        <!-- ======================================================== -->
+        <section class="tab-view active" id="view-setup">
+          <!-- Selector de Modalidad -->
+          <div class="elven-block">
+            <span class="elven-section-label">MODALIDAD DE TORNEO</span>
+            <div class="difficulty-grid" id="modalityGrid">
+              <button class="difficulty-card active" data-mode="individual">
+                <span class="radio-ring"></span>
+                <strong class="diff-title">INDIVIDUAL</strong>
+                <span class="diff-sub">1 VS 1 EN MESA</span>
+                <span class="diff-desc">EMPAREJAMIENTO SUIZO</span>
+              </button>
+              <button class="difficulty-card" data-mode="pairs">
+                <span class="radio-ring"></span>
+                <strong class="diff-title">PAREJAS</strong>
+                <span class="diff-sub">DUELOS 2 VS 2</span>
+                <span class="diff-desc">12 PV POR ABANDONO</span>
+              </button>
+              <button class="difficulty-card" data-mode="teams">
+                <span class="radio-ring"></span>
+                <strong class="diff-title">EQUIPOS</strong>
+                <span class="diff-sub">DUELOS 4VS4</span>
+                <span class="diff-desc">COLORES Y GRUPOS MESA</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Selector de Sistema de Puntos -->
+          <div class="elven-block">
+            <span class="elven-section-label">SISTEMA DE PUNTOS DE TORNEO</span>
+            <div class="difficulty-grid two-cols" id="scoringSystemGrid">
+              <button class="difficulty-card active" data-scoring="expanded">
+                <span class="radio-ring"></span>
+                <strong class="diff-title">EXPANDIDO</strong>
+                <span class="diff-sub">VICTORIA MASACRE (DIF ≥ 6 PV): 5 PTS • MARGINAL: 4 PTS</span>
+                <span class="diff-desc">EMPATE: 2 PTS • DERROTA MARGINAL: 1 PT • RENDICIÓN: -1 PT</span>
+              </button>
+              <button class="difficulty-card" data-scoring="classic">
+                <span class="radio-ring"></span>
+                <strong class="diff-title">CLÁSICO</strong>
+                <span class="diff-sub">VICTORIA: 3 PTS • EMPATE: 1 PT • DERROTA: 0 PTS</span>
+                <span class="diff-desc">ESCALA TRADICIONAL DE TORNEO</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Parámetros Numéricos del Torneo -->
+          <div class="elven-block">
+            <span class="elven-section-label">PARÁMETROS DE RONDAS Y MESAS</span>
+            <div class="params-grid">
+              <div class="param-field">
+                <label for="inputTournamentName">Nombre del Evento</label>
+                <input type="text" id="inputTournamentName" value="Torneo MESBG" />
+              </div>
+              <div class="param-field">
+                <label for="inputTotalRounds">N° de Rondas</label>
+                <input type="number" id="inputTotalRounds" min="1" max="12" value="4" />
+              </div>
+              <div class="param-field">
+                <label for="inputTotalTables">N° de Mesas</label>
+                <input type="number" id="inputTotalTables" min="1" max="60" value="6" />
+              </div>
+              <!-- Campos adicionales visibles solo en modo Equipos -->
+              <div class="param-field team-only-field hidden" id="fieldTeamCount">
+                <label for="inputTeamCount">N° de Equipos</label>
+                <input type="number" id="inputTeamCount" min="2" max="30" step="2" value="4" />
+              </div>
+              <div class="param-field team-only-field hidden" id="fieldMembersPerTeam">
+                <label for="inputMembersPerTeam">Integrantes / Equipo</label>
+                <input type="number" id="inputMembersPerTeam" min="2" max="8" value="4" />
+              </div>
+              <div class="param-field team-only-field hidden" id="fieldTablesPerTeam">
+                <label for="inputTablesPerTeam">Mesas por Equipo</label>
+                <input type="number" id="inputTablesPerTeam" min="1" max="8" value="4" />
+              </div>
+            </div>
+          </div>
+
+          <!-- Listado de Participantes (Individual / Parejas) -->
+          <div class="elven-block" id="individualRosterBlock">
+            <div class="block-header-flex">
+              <div>
+                <span class="elven-section-label">LISTA DE PARTICIPANTES</span>
+                <p class="helper-caption">Total inscritos: <strong id="rosterCountLabel">0</strong> jugadores • Mesas requeridas: <strong id="requiredTablesLabel">0</strong></p>
+              </div>
+              <div class="inline-add-group">
+                <input type="text" id="inputNewPlayerName" placeholder="Nombre del jugador o pareja..." />
+                <button class="btn-elven-outline" id="btnAddPlayer">+ Agregar</button>
+              </div>
+            </div>
+
+            <div class="roster-grid" id="playersRosterList"></div>
+          </div>
+
+          <!-- Listado de Equipos (Solo en Modo Equipos) -->
+          <div class="elven-block hidden" id="teamsRosterBlock">
+            <div class="block-header-flex">
+              <div>
+                <span class="elven-section-label">FORMULARIO DE EQUIPOS E INTEGRANTES</span>
+                <p class="helper-caption">Configura el nombre de cada equipo y sus integrantes para habilitar los cruces y grupos de mesas.</p>
+              </div>
+              <button class="btn-elven-outline" id="btnGenerateTeamTemplate">Generar Equipos</button>
+            </div>
+            <div class="teams-roster-grid" id="teamsRosterContainer"></div>
+          </div>
+
+          <!-- Botones Principales de Acción -->
+          <div class="cta-stack">
+            <button class="btn-gold-cta" id="btnGenerateTournament">
+              <span class="play-icon">▶</span> GENERAR TORNEO
+            </button>
+            <div class="cta-secondary-row">
+              <button class="btn-dark-leaderboard" id="btnGoToPodiumFromSetup">
+                <span class="trophy-icon">🏆</span> VER TABLA DE POSICIONES (PODIO)
+              </button>
+              <button class="btn-dark-danger" id="btnClearAllTemplate" title="Limpia jugadores, rondas y podio para un nuevo torneo">
+                🧹 FORMATEAR PLANTILLA
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <!-- ======================================================== -->
+        <!-- VISTA 2: RONDAS, EMPAREJAMIENTOS Y RESULTADOS            -->
+        <!-- ======================================================== -->
+        <section class="tab-view" id="view-rounds">
+          <!-- Selector de Pestañas de Ronda (ronda 1 .. ronda N) -->
+          <div class="elven-block">
+            <div class="round-tabs-header">
+              <div>
+                <span class="elven-section-label">SELECCIÓN DE RONDA ACTIVA</span>
+                <p class="helper-caption" id="roundStatusCaption">Ronda 1</p>
+              </div>
+              <div class="round-pills-bar" id="roundPillsContainer"></div>
+            </div>
+
+            <!-- Barra de Controles de la Ronda -->
+            <div class="round-Macro-toolbar">
+              <button class="btn-gold-cta btn-compact" id="btnPairCurrentRound">
+                <span>▶</span> EMPAREJAR RONDAS
+              </button>
+              <button class="btn-finish-round btn-compact" id="btnFinishCurrentRound">
+                <span>✓</span> FINALIZAR RONDA
+              </button>
+              <button class="btn-dark-leaderboard btn-compact" id="btnUpdatePodiumFromRound">
+                <span>🏆</span> ACTUALIZAR PODIO
+              </button>
+              <button class="btn-elven-outline btn-compact" id="btnAddManualMatch" title="Añadir mesa adicional o editar cruces">
+                + Mesa Manual
+              </button>
+              <button class="btn-elven-outline btn-compact" id="btnClearCurrentRound" title="Limpiar los datos de esta ronda">
+                Limpiar Ronda
+              </button>
+            </div>
+          </div>
+
+          <!-- Panel Exclusivo de Duelos por Equipos -->
+          <div class="elven-block hidden" id="teamRoundPairingPanel">
+            <div class="block-header-flex">
+              <div>
+                <span class="elven-section-label">RESUMEN DE ENFRENTAMIENTOS DE EQUIPOS</span>
+                <p class="helper-caption" id="teamColorAlertCaption">Asigna los equipos, colores (Rojo/Azul) y grupos de mesas antes de volcar los enfrentamientos individuales.</p>
+              </div>
+              <div class="inline-add-group">
+                <button class="btn-elven-outline btn-sm" id="btnPairTeamsAuto">⚔️ Emparejar Equipos (R2+)</button>
+                <button class="btn-elven-outline btn-sm" id="btnAssignRandomColors">🎨 Asignar Colores</button>
+                <button class="btn-elven-outline btn-sm" id="btnAssignTableGroups">🎲 Sortear Grupos de Mesa</button>
+                <button class="btn-gold-cta btn-sm" id="btnBuildTeamMemberMatches">▶ Volcar Mesas de Integrantes</button>
+              </div>
+            </div>
+            <div id="teamPairingsContainer" class="team-pairings-list"></div>
+          </div>
+
+          <!-- Listado de Mesas de la Ronda (Bloques de enfrentamiento) -->
+          <div class="matches-container" id="roundMatchesContainer"></div>
+        </section>
+
+        <!-- ======================================================== -->
+        <!-- VISTA 3: PODIO Y SÁBANA DE RESUMEN                       -->
+        <!-- ======================================================== -->
+        <section class="tab-view" id="view-podium">
+          <!-- Tarjetas Destacadas de Podio (1° Oro, 2° Plata, 3° Bronce, Último Activo) -->
+          <div class="podium-showcase" id="podiumTopCards"></div>
+
+          <!-- Tabla Completa de Posiciones -->
+          <div class="elven-block">
+            <div class="block-header-flex">
+              <div>
+                <span class="elven-section-label">TABLA DE POSICIONES OFICIAL (PODIO)</span>
+                <p class="helper-caption">Criterio de desempate: 1° No Abandono • 2° Puntos de Torneo Final • 3° Diferencia de PV • 4° PV a Favor</p>
+              </div>
+              <div class="inline-add-group">
+                <button class="btn-gold-cta btn-sm" id="btnDownloadIgStory">📸 Descargar Resultado</button>
+                <button class="btn-elven-outline btn-sm" id="btnShowFinalDialog">🏆 Podio Final</button>
+                <button class="btn-elven-outline btn-sm" id="btnToggleDetailedResumen">📋 Ver Sábana Resumen R1–RN</button>
+              </div>
+            </div>
+
+            <div class="table-responsive">
+              <table class="elven-table" id="podiumTable">
+                <thead>
+                  <tr>
+                    <th>POS</th>
+                    <th id="thPlayerOrTeam">JUGADOR</th>
+                    <th class="text-center">ESTADO</th>
+                    <th class="text-center" title="Puntos de Torneo Brutos">PT BRUTOS</th>
+                    <th class="text-center" title="Penalizaciones por Pintura y Atraso">PENALIZ.</th>
+                    <th class="text-center gold-col" title="Puntos de Torneo Finales (PT Brutos + Penalizaciones)">PT FINAL</th>
+                    <th class="text-center" title="Diferencia de Puntos de Victoria">DIF. PV</th>
+                    <th class="text-center" title="Puntos de Victoria a Favor (Escenarios)">PV FAVOR</th>
+                  </tr>
+                </thead>
+                <tbody id="podiumTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Sábana Desplegable Resumen -->
+          <div class="elven-block hidden" id="detailedResumenBlock">
+            <span class="elven-section-label">CONSOLIDADO RONDA POR RONDA</span>
+            <p class="helper-caption">Desglose automático de resultados (V/E/D), Puntos de Torneo (PT), Puntos de Victoria (PV) y Diferencia (Dif) en cada ronda.</p>
+            <div class="table-responsive">
+              <table class="elven-table compact-table" id="resumenSheetTable">
+                <thead id="resumenSheetHead"></thead>
+                <tbody id="resumenSheetBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <!-- Pie de Página Oficial -->
+  <footer class="elven-footer">
+    <div class="footer-ornament-line" aria-hidden="true"></div>
+    <p class="footer-credit">Creado por <strong>Equipo DeazuL 2026</strong></p>
+  </footer>
+
+  <!-- Overlay Animado de Celebración de Podio Final -->
+  <div class="celebration-overlay hidden" id="podiumCelebrationOverlay">
+    <canvas id="confettiCanvas" class="confetti-canvas"></canvas>
+    <div class="celebration-stage">
+      <button class="celebration-close-btn" id="btnCloseCelebrationTop" title="Cerrar">✕</button>
+      <div class="celebration-header">
+        <span class="celebration-eyebrow">✦ TORNEO FINALIZADO • CUADRO DE HONOR ✦</span>
+        <h2 class="celebration-title" id="celebrationTournamentTitle">TORNEO MESBG</h2>
+      </div>
+
+      <div class="celebration-pedestals" id="celebrationPedestalsContainer"></div>
+
+      <div class="celebration-spoon-Slot" id="celebrationSpoonSlot"></div>
+
+      <div class="celebration-actions">
+        <button class="btn-gold-cta" id="btnDownloadStoryFromCelebration">
+          📸 DESCARGAR RESULTADO
+        </button>
+        <button class="btn-elven-outline" id="btnCloseCelebration">
+          VER TABLA DE POSICIONES
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal de Reglas y Premios -->
+  <div class="elven-modal-backdrop hidden" id="elvenModal">
+    <div class="elven-modal-card">
+      <div class="modal-header">
+        <h3 id="modalTitle">Reglas del Sistema</h3>
+        <button class="modal-close-btn" id="btnCloseModal">✕</button>
+      </div>
+      <div class="modal-body" id="modalBodyContent"></div>
+    </div>
+  </div>
+
+  <!-- Toast de Notificación -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
