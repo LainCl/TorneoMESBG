@@ -399,14 +399,14 @@
     if (!endpoint) return;
 
     try {
-      updateLiveSyncBadge(`🔄 SYNC (${state.roomCode})`, true);
+      updateLiveSyncBadge(`🔄 ${state.roomCode}`, true);
       const res = await fetch(endpoint, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(state)
       });
       if (res.ok) {
-        updateLiveSyncBadge(`🟢 SALA ${state.roomCode}`, true);
+        updateLiveSyncBadge(`🟢 ${state.roomCode}`, true);
       } else {
         updateLiveSyncBadge('⚠️ ERROR NUBE', false);
       }
@@ -446,7 +446,7 @@
   async function pullStateFromCloud() {
     const endpoint = getRoomCloudEndpoint(state.roomCode);
     if (!endpoint) {
-      updateLiveSyncBadge(`⚪ SALA LOCAL (${state.roomCode})`, false);
+      updateLiveSyncBadge(`⚪ ${state.roomCode}`, false);
       return false;
     }
 
@@ -476,7 +476,7 @@
             renderPodiumView();
           }
         }
-        updateLiveSyncBadge(`🟢 SALA ${state.roomCode}`, true);
+        updateLiveSyncBadge(`🟢 ${state.roomCode}`, true);
         return true;
       }
       // Si la sala aún no existe en Firebase y este navegador es el organizador, publicarla automáticamente
@@ -484,7 +484,7 @@
         await pushStateToCloud();
         return true;
       }
-      updateLiveSyncBadge(`🟢 SALA ${state.roomCode}`, true);
+      updateLiveSyncBadge(`🟢 ${state.roomCode}`, true);
       return false;
     } catch (err) {
       console.warn('Error en pullStateFromCloud:', err);
@@ -566,7 +566,7 @@
 
     const endpoint = getRoomCloudEndpoint(state.roomCode);
     if (!endpoint) {
-      updateLiveSyncBadge(`⚪ SALA LOCAL (${state.roomCode})`, false);
+      updateLiveSyncBadge(`⚪ ${state.roomCode}`, false);
       return;
     }
 
@@ -589,7 +589,7 @@
               renderAll();
               isApplyingRemoteUpdate = false;
             }
-            updateLiveSyncBadge(`🟢 SALA ${state.roomCode}`, true);
+            updateLiveSyncBadge(`🟢 ${state.roomCode}`, true);
           }
         } catch (e) {
           // Ignorar
