@@ -4,6 +4,8 @@
 
 (function () {
   const STORAGE_KEY = 'mesbg_torneo_state_v2';
+  const ROOMS_REGISTRY_KEY = 'mesbg_rooms_registry_v1';
+  const OWNED_ROOMS_KEY = 'mesbg_owned_rooms_v1';
   const FIREBASE_URL_STORAGE_KEY = 'mesbg_firebase_db_url';
   const ADMIN_SESSION_KEY = 'mesbg_admin_unlocked';
 
@@ -16,15 +18,69 @@
   let isApplyingRemoteUpdate = false;
 
   // =========================================================================
-  // 1. INICIALIZACIÓN Y PERSISTENCIA DEL ESTADO
+  // 1. INICIALIZACIÓN, CÓDIGO COMPANION Y PERSISTENCIA DEL ESTADO
   // =========================================================================
 
-  function buildCleanInitialState() {
+  function generateRoomCode() {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let code = '';
+    for (let i = 0; i < 6; i++) {
+      code += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return code;
+  }
+
+  function markRoomAsOwned(roomCode) {
+    if (!roomCode) return;
+    try {
+      const list = JSON.parse(localStorage.getItem(OWNED_ROOMS_KEY) || '[]');
+      if (!list.includes(roomCode)) {
+        list.push(roomCode);
+        localStorage.setItem(OWNED_ROOMS_KEY, JSON.stringify(list));
+      }
+    } catch (e) {
+      // Ignorar
+    }
+  }
+
+  function isRoomOwnedByMe(roomCode) {
+    if (!roomCode) return false;
+    try {
+      const list = JSON.parse(localStorage.getItem(OWNED_ROOMS_KEY) || '[]');
+      return list.includes(roomCode);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function saveRoomToLocalRegistry(tournamentState) {
+    if (!tournamentState || !tournamentState.roomCode) return;
+    try {
+      const reg = JSON.parse(localStorage.getItem(ROOMS_REGISTRY_KEY) || '{}');
+      reg[tournamentState.roomCode] = tournamentState;
+      localStorage.setItem(ROOMS_REGISTRY_KEY, JSON.stringify(reg));
+    } catch (e) {
+      console.warn('No se pudo actualizar registro local de salas:', e);
+    }
+  }
+
+  function getRoomFromLocalRegistry(roomCode) {
+    if (!roomCode) return null;
+    try {
+      const reg = JSON.parse(localStorage.getItem(ROOMS_REGISTRY_KEY) || '{}');
+      return reg[roomCode.toUpperCase()] || null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function buildCleanInitialState(customRoomCode) {
     const totalRounds = 4;
     const totalTables = 6;
     const teamCount = 4;
     const membersPerTeam = 4;
     const tablesPerTeam = 4;
+    const roomCode = (customRoomCode || generateRoomCode()).toUpperCase();
 
     const rounds = [];
     for (let r = 1; r <= totalRounds; r++) {
@@ -39,6 +95,7 @@
     }
 
     return {
+      roomCode,
       tournamentName: 'Torneo MESBG',
       mode: 'individual', // 'individual' | 'pairs' | 'teams'
       scoringSystem: 'expanded', // 'expanded' (5/4/2/1/0/-1) | 'classic' (3/1/0)
@@ -51,7 +108,8 @@
       players: [],
       teams: createDefaultTeams(teamCount, membersPerTeam),
       tableGroups: createTableGroups(16, tablesPerTeam),
-      rounds
+      rounds,
+      updatedAt: Date.now()
     };
   }
 
@@ -91,9 +149,13 @@
   }
 
   function saveState() {
+    if (!state.roomCode) {
+      state.roomCode = generateRoomCode();
+    }
     state.updatedAt = Date.now();
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      saveRoomToLocalRegistry(state);
     } catch (e) {
       console.warn('No se pudo guardar en localStorage:', e);
     }
@@ -103,41 +165,68 @@
   }
 
   function loadState() {
-    // 1. Verificar si viene parámetro ?db= en la URL para conectar jugadores automáticamente
+    let urlCodeParam = '';
     try {
       const params = new URLSearchParams(window.location.search);
       const dbParam = params.get('db');
       if (dbParam && dbParam.startsWith('https://')) {
         localStorage.setItem(FIREBASE_URL_STORAGE_KEY, dbParam.replace(/\/+$/, ''));
       }
+      const codeParam = params.get('code');
+      if (codeParam && codeParam.trim()) {
+        urlCodeParam = codeParam.trim().toUpperCase();
+      }
     } catch (e) {
       // Ignorar
     }
 
-    // 2. Determinar si inicia en Modo Organizador o Vista Jugador
-    const isLocalhost =
-      window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-    const unlockedSession = sessionStorage.getItem(ADMIN_SESSION_KEY) === 'true';
-    isAdminMode = isLocalhost || unlockedSession;
+    // Si el usuario entra mediante un link con ?code=XXXXXX
+    if (urlCodeParam) {
+      const localMatch = getRoomFromLocalRegistry(urlCodeParam);
+      if (localMatch && Array.isArray(localMatch.rounds)) {
+        state = localMatch;
+      } else {
+        state = buildCleanInitialState(urlCodeParam);
+      }
+      const unlockedSession = sessionStorage.getItem(ADMIN_SESSION_KEY) === 'true';
+      isAdminMode = unlockedSession || isRoomOwnedByMe(urlCodeParam);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      return;
+    }
 
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
         if (parsed && Array.isArray(parsed.rounds)) {
+          if (!parsed.roomCode) {
+            parsed.roomCode = generateRoomCode();
+            markRoomAsOwned(parsed.roomCode);
+          }
           state = parsed;
+          saveRoomToLocalRegistry(state);
+          const isLocalhost =
+            window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+          const unlockedSession = sessionStorage.getItem(ADMIN_SESSION_KEY) === 'true';
+          isAdminMode = isLocalhost || unlockedSession || isRoomOwnedByMe(state.roomCode);
           return;
         }
       }
     } catch (e) {
       console.warn('Error leyendo localStorage:', e);
     }
+
     state = buildCleanInitialState();
+    markRoomAsOwned(state.roomCode);
+    const isLocalhost =
+      window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    const unlockedSession = sessionStorage.getItem(ADMIN_SESSION_KEY) === 'true';
+    isAdminMode = isLocalhost || unlockedSession;
     saveState();
   }
 
   // =========================================================================
-  // 1B. SINCRONIZACIÓN EN TIEMPO REAL CON FIREBASE REALTIME DATABASE
+  // 1B. SINCRONIZACIÓN EN TIEMPO REAL POR CÓDIGO DE SALA (COMPANION + FIREBASE)
   // =========================================================================
 
   function getFirebaseDbUrl() {
@@ -148,6 +237,13 @@
     const fromLocal = localStorage.getItem(FIREBASE_URL_STORAGE_KEY) || '';
     const url = (fromConfig || fromLocal).replace(/\/+$/, '');
     return url;
+  }
+
+  function getRoomCloudEndpoint(roomCode) {
+    const dbUrl = getFirebaseDbUrl();
+    const code = (roomCode || state.roomCode || 'DEFAULT').toUpperCase();
+    if (!dbUrl) return '';
+    return `${dbUrl}/torneos/${code}.json`;
   }
 
   function getAdminPin() {
@@ -162,18 +258,18 @@
   }
 
   async function pushStateToCloud() {
-    const dbUrl = getFirebaseDbUrl();
-    if (!dbUrl) return;
+    const endpoint = getRoomCloudEndpoint(state.roomCode);
+    if (!endpoint) return;
 
     try {
-      updateLiveSyncBadge('🔄 PUBLICANDO...', true);
-      const res = await fetch(`${dbUrl}/torneo_mesbg.json`, {
+      updateLiveSyncBadge(`🔄 SYNC (${state.roomCode})`, true);
+      const res = await fetch(endpoint, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(state)
       });
       if (res.ok) {
-        updateLiveSyncBadge('🟢 EN VIVO', true);
+        updateLiveSyncBadge(`🟢 SALA ${state.roomCode}`, true);
       } else {
         updateLiveSyncBadge('⚠️ ERROR NUBE', false);
       }
@@ -184,15 +280,15 @@
   }
 
   async function pullStateFromCloud() {
-    const dbUrl = getFirebaseDbUrl();
-    if (!dbUrl) {
-      updateLiveSyncBadge('⚪ MODO LOCAL', false);
-      return;
+    const endpoint = getRoomCloudEndpoint(state.roomCode);
+    if (!endpoint) {
+      updateLiveSyncBadge(`⚪ SALA LOCAL (${state.roomCode})`, false);
+      return false;
     }
 
     try {
-      const res = await fetch(`${dbUrl}/torneo_mesbg.json`);
-      if (!res.ok) return;
+      const res = await fetch(endpoint);
+      if (!res.ok) return false;
       const remoteData = await res.json();
       if (remoteData && Array.isArray(remoteData.rounds)) {
         const localTime = Number(state.updatedAt || 0);
@@ -201,14 +297,72 @@
           isApplyingRemoteUpdate = true;
           state = remoteData;
           localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+          saveRoomToLocalRegistry(state);
           renderAll();
           isApplyingRemoteUpdate = false;
         }
+        updateLiveSyncBadge(`🟢 SALA ${state.roomCode}`, true);
+        return true;
       }
-      updateLiveSyncBadge('🟢 EN VIVO', true);
+      updateLiveSyncBadge(`🟢 SALA ${state.roomCode}`, true);
+      return false;
     } catch (err) {
       updateLiveSyncBadge('⚠️ SIN CONEXIÓN', false);
+      return false;
     }
+  }
+
+  async function joinTournamentByCode(rawCode) {
+    const code = (rawCode || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (code.length < 4) {
+      showToast('⚠️ Ingresa un código de torneo válido (ej: M8K4R2).');
+      return;
+    }
+
+    const endpoint = getRoomCloudEndpoint(code);
+    if (endpoint) {
+      showToast(`🔍 Buscando torneo "${code}" en vivo...`);
+      try {
+        const res = await fetch(endpoint);
+        if (res.ok) {
+          const remoteData = await res.json();
+          if (remoteData && Array.isArray(remoteData.rounds)) {
+            isApplyingRemoteUpdate = true;
+            state = remoteData;
+            state.roomCode = code;
+            isAdminMode = isRoomOwnedByMe(code) || sessionStorage.getItem(ADMIN_SESSION_KEY) === 'true';
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+            saveRoomToLocalRegistry(state);
+            applyRoleModeUI();
+            switchTab('rounds');
+            startCloudRealtimeSync();
+            isApplyingRemoteUpdate = false;
+            showToast(`✅ Conectado al torneo "${state.tournamentName}" (ID: ${code}).`);
+            return;
+          }
+        }
+      } catch (e) {
+        console.warn('Error buscando sala en Firebase:', e);
+      }
+    }
+
+    // Buscar en el registro local del navegador (útil en modo local o entre pestañas)
+    const localRoom = getRoomFromLocalRegistry(code);
+    if (localRoom && Array.isArray(localRoom.rounds)) {
+      isApplyingRemoteUpdate = true;
+      state = localRoom;
+      state.roomCode = code;
+      isAdminMode = isRoomOwnedByMe(code) || sessionStorage.getItem(ADMIN_SESSION_KEY) === 'true';
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      applyRoleModeUI();
+      switchTab('rounds');
+      startCloudRealtimeSync();
+      isApplyingRemoteUpdate = false;
+      showToast(`✅ Torneo "${state.tournamentName}" (ID: ${code}) cargado.`);
+      return;
+    }
+
+    showToast(`⚠️ No se encontró ningún torneo activo con el código "${code}".`);
   }
 
   function startCloudRealtimeSync() {
@@ -221,18 +375,16 @@
       cloudPollTimer = null;
     }
 
-    const dbUrl = getFirebaseDbUrl();
-    if (!dbUrl) {
-      updateLiveSyncBadge('⚪ MODO LOCAL', false);
+    const endpoint = getRoomCloudEndpoint(state.roomCode);
+    if (!endpoint) {
+      updateLiveSyncBadge(`⚪ SALA LOCAL (${state.roomCode})`, false);
       return;
     }
 
-    // Lectura inicial inmediata
     pullStateFromCloud();
 
-    // Suscripción en tiempo real mediante Server-Sent Events (SSE) nativo de Firebase
     try {
-      const sse = new EventSource(`${dbUrl}/torneo_mesbg.json`);
+      const sse = new EventSource(endpoint);
       sse.addEventListener('put', (ev) => {
         try {
           const payload = JSON.parse(ev.data);
@@ -243,13 +395,14 @@
               isApplyingRemoteUpdate = true;
               state = payload.data;
               localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+              saveRoomToLocalRegistry(state);
               renderAll();
               isApplyingRemoteUpdate = false;
             }
-            updateLiveSyncBadge('🟢 EN VIVO', true);
+            updateLiveSyncBadge(`🟢 SALA ${state.roomCode}`, true);
           }
         } catch (e) {
-          // Ignorar paquete parcial
+          // Ignorar
         }
       });
       cloudEventSource = sse;
@@ -257,7 +410,6 @@
       console.warn('SSE no disponible, usando polling:', e);
     }
 
-    // Respaldo de actualización periódica cada 5 segundos
     cloudPollTimer = setInterval(pullStateFromCloud, 5000);
   }
 
@@ -773,6 +925,10 @@
 
     document.getElementById('sidebarTournamentName').textContent =
       (state.tournamentName || 'TORNEO MESBG').toUpperCase();
+    const roomCodeEl = document.getElementById('activeRoomCodeDisplay');
+    if (roomCodeEl) {
+      roomCodeEl.textContent = state.roomCode || '------';
+    }
     document.getElementById('statActivePlayers').textContent = `${activeCount} / ${totalCount}`;
     document.getElementById('statRounds').textContent = `${completedRounds} / ${state.totalRounds}`;
     document.getElementById('statTables').textContent = String(state.totalTables);
@@ -1930,20 +2086,84 @@
     if (adminBtn) {
       adminBtn.addEventListener('click', openAdminAndCloudModal);
     }
+
+    // Companion Room Code: Copiar código / link de sala
+    const btnCopyRoomCode = document.getElementById('btnCopyRoomCode');
+    if (btnCopyRoomCode) {
+      btnCopyRoomCode.addEventListener('click', () => {
+        const dbParam = getFirebaseDbUrl() ? `&db=${encodeURIComponent(getFirebaseDbUrl())}` : '';
+        const inviteUrl = `${window.location.origin}${window.location.pathname}?code=${state.roomCode}${dbParam}`;
+        navigator.clipboard.writeText(inviteUrl);
+        showToast(`📋 Código ${state.roomCode} y link de seguimiento copiados al portapapeles.`);
+      });
+    }
+
+    // Companion Room Code: Crear una nueva sala de torneo con nuevo ID
+    const btnNewRoomCode = document.getElementById('btnNewRoomCode');
+    if (btnNewRoomCode) {
+      btnNewRoomCode.addEventListener('click', () => {
+        openConfirmModal(
+          'Crear Nueva Sala de Torneo',
+          '¿Deseas crear un nuevo torneo con un nuevo código de sala (estilo Companion)? El torneo actual quedará guardado bajo su código actual.',
+          '➕ Crear Nueva Sala',
+          async () => {
+            const newCode = generateRoomCode();
+            state = createFreshState();
+            state.roomCode = newCode;
+            ensureConsistency();
+            markRoomAsOwned(newCode);
+            isAdminMode = true;
+            sessionStorage.setItem(ADMIN_SESSION_KEY, 'true');
+            saveState();
+            startCloudRealtimeSync();
+            applyRoleModeUI();
+            renderAll();
+            showToast(`✨ Nueva sala creada con el código ${newCode}.`);
+          }
+        );
+      });
+    }
+
+    // Companion Room Code: Unirse a un torneo existente mediante su código
+    const btnJoinRoomCode = document.getElementById('btnJoinRoomCode');
+    const inputJoinRoomCode = document.getElementById('inputJoinRoomCode');
+    if (btnJoinRoomCode && inputJoinRoomCode) {
+      btnJoinRoomCode.addEventListener('click', () => {
+        joinTournamentByCode(inputJoinRoomCode.value);
+      });
+      inputJoinRoomCode.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          joinTournamentByCode(inputJoinRoomCode.value);
+        }
+      });
+    }
+
+    // Sincronización instantánea entre pestañas del mismo navegador (Modo Local o Nube)
+    window.addEventListener('storage', (e) => {
+      if (e.key === ROOMS_REGISTRY_KEY && state && state.roomCode) {
+        const updatedRoom = getRoomFromLocalRegistry(state.roomCode);
+        if (updatedRoom && updatedRoom.updatedAt > (state.updatedAt || 0)) {
+          state = updatedRoom;
+          ensureConsistency();
+          renderAll();
+        }
+      }
+    });
   }
 
   function openAdminAndCloudModal() {
     const currentDbUrl = getFirebaseDbUrl();
     const shareUrl = currentDbUrl
-      ? `${window.location.origin}${window.location.pathname}?db=${encodeURIComponent(currentDbUrl)}`
-      : `${window.location.origin}${window.location.pathname}`;
+      ? `${window.location.origin}${window.location.pathname}?code=${state.roomCode}&db=${encodeURIComponent(currentDbUrl)}`
+      : `${window.location.origin}${window.location.pathname}?code=${state.roomCode}`;
 
     openModal(
-      'Modo Organizador y Seguimiento en Vivo (Firebase)',
+      'Modo Organizador y Seguimiento en Vivo (Companion)',
       `
-        <h4>1. Modo de Visualización en este Dispositivo</h4>
+        <h4>1. Sala de Torneo Activa: <span style="color:var(--gold-bright); letter-spacing:0.12em;">${escapeHtml(state.roomCode || '------')}</span></h4>
         <p style="margin-bottom:10px;">
-          Estado actual: <strong style="color:var(--gold-bright);">${
+          Estado actual en este dispositivo: <strong style="color:var(--gold-bright);">${
             isAdminMode
               ? '🔓 Modo Organizador (Edición habilitada)'
               : '🔒 Vista Jugador (Solo lectura de Rondas, Mesas y Podio)'
@@ -1960,33 +2180,29 @@
               </div>`
         }
 
+        <div style="background:rgba(9,17,15,0.85); border:1px solid var(--border-gold); border-radius:10px; padding:10px 12px; margin-bottom:14px;">
+          <span class="stat-label">CÓDIGO Y LINK DE INVITACIÓN PARA JUGADORES (ESTILO COMPANION):</span>
+          <div style="display:flex; gap:8px; align-items:center; margin-top:4px;">
+            <input type="text" readonly value="${escapeHtml(shareUrl)}" id="inputSharePlayerLink" style="flex:1; font-size:0.78rem;" />
+            <button type="button" class="btn-elven-outline btn-sm" id="btnCopyShareLink">📋 Copiar Link</button>
+          </div>
+        </div>
+
         <h4>2. Base de Datos en Tiempo Real (Firebase Realtime Database)</h4>
         <p class="helper-caption" style="margin-bottom:8px;">
-          Conecta una URL de <strong>Firebase Realtime Database</strong> para que todos los jugadores vean las rondas, mesas y el podio en vivo desde sus celulares:
+          Conecta una URL de <strong>Firebase Realtime Database</strong> para que cualquier jugador que ingrese el código <strong>${escapeHtml(state.roomCode || '')}</strong> desde su celular vea las rondas, mesas y el podio en tiempo real:
         </p>
         <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:12px;">
           <input type="text" id="inputFirebaseDbUrl" value="${escapeHtml(currentDbUrl)}" placeholder="https://tu-proyecto-default-rtdb.firebaseio.com" style="flex:1; min-width:260px;" />
           <button type="button" class="btn-gold-cta btn-sm" id="btnSaveFirebaseUrl">☁️ Conectar y Publicar</button>
         </div>
 
-        ${
-          currentDbUrl
-            ? `<div style="background:rgba(9,17,15,0.85); border:1px solid var(--border-gold); border-radius:10px; padding:10px 12px; margin-bottom:12px;">
-                <span class="stat-label">LINK DIRECTO PARA ENVIAR A LOS JUGADORES (WHATSAPP):</span>
-                <div style="display:flex; gap:8px; align-items:center; margin-top:4px;">
-                  <input type="text" readonly value="${escapeHtml(shareUrl)}" id="inputSharePlayerLink" style="flex:1; font-size:0.78rem;" />
-                  <button type="button" class="btn-elven-outline btn-sm" id="btnCopyShareLink">📋 Copiar Link</button>
-                </div>
-              </div>`
-            : ''
-        }
-
-        <h4>¿Cómo crear tu URL gratuita de Firebase en 1 minuto?</h4>
+        <h4>¿Cómo activar la nube para todos los celulares en 1 minuto?</h4>
         <ul>
-          <li>Entra a <a href="https://console.firebase.google.com/" target="_blank" rel="noopener" style="color:var(--gold-bright);">console.firebase.google.com</a> y crea un proyecto.</li>
+          <li>Entra a <a href="https://console.firebase.google.com/" target="_blank" rel="noopener" style="color:var(--gold-bright);">console.firebase.google.com</a> y crea un proyecto gratuito.</li>
           <li>En el menú izquierdo ve a <strong>Compilación → Realtime Database → Crear base de datos</strong>.</li>
           <li>Elige <strong>Comenzar en modo de prueba</strong> y copia la URL que aparece arriba (termina en <code>.firebaseio.com</code> o <code>.firebasedatabase.app</code>).</li>
-          <li>Pégala arriba (o dentro del archivo <code>cloudConfig.js</code> de tu repositorio para que quede fija para siempre).</li>
+          <li>Pégala arriba (o dentro del archivo <code>cloudConfig.js</code> de tu repositorio para que quede configurada para todos los torneos).</li>
         </ul>
       `
     );
@@ -1997,10 +2213,11 @@
         const pinVal = (document.getElementById('inputAdminPin')?.value || '').trim();
         if (pinVal === getAdminPin()) {
           isAdminMode = true;
+          markRoomAsOwned(state.roomCode);
           sessionStorage.setItem(ADMIN_SESSION_KEY, 'true');
           applyRoleModeUI();
           closeModal();
-          showToast('🔓 Modo Organizador activado.');
+          showToast('🔓 Modo Organizador activado para esta sala.');
         } else {
           showToast('⚠️ Clave incorrecta.');
         }

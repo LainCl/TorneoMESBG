@@ -124,6 +124,33 @@
         <p class="hero-subtitle">Comunidad MESBG Chile</p>
       </div>
 
+      <!-- Tarjeta de Sala Estilo Companion (Código de Torneo) -->
+      <div class="CompanionRoomCard">
+        <div class="companion-top-row">
+          <span class="companion-label">CÓDIGO DE TORNEO</span>
+          <div class="companion-code-actions">
+            <button type="button" class="companion-mini-btn" id="btnCopyRoomCode" title="Copiar código e invitación del torneo">
+              📋 Copiar Link
+            </button>
+            <button type="button" class="companion-mini-btn admin-only-block" id="btnNewRoomCode" title="Crear un nuevo torneo con un ID diferente">
+              ➕ Nuevo ID
+            </button>
+          </div>
+        </div>
+
+        <div class="companion-code-display" id="activeRoomCodeDisplay" title="Comparte este código con los jugadores">
+          ------
+        </div>
+
+        <div class="companion-join-box">
+          <span class="companion-join-label">¿Buscas otro torneo? Ingresa su ID:</span>
+          <div class="companion-join-row">
+            <input type="text" id="inputJoinRoomCode" maxlength="8" placeholder="Ej: M8K4R2" autocomplete="off" />
+            <button type="button" class="btn-gold-cta btn-sm" id="btnJoinRoomCode">Entrar</button>
+          </div>
+        </div>
+      </div>
+
       <!-- Tarjeta de Resumen en Vivo del Torneo -->
       <div class="QuickStatusCard">
         <div class="status-header">
