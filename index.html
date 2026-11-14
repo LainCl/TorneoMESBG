@@ -158,6 +158,12 @@
             <button type="button" class="btn-gold-cta btn-sm" id="btnJoinRoomCode">Entrar</button>
           </div>
         </div>
+
+        <!-- Lista de Mis Torneos Recientes -->
+        <div class="companion-recent-box" id="recentRoomsSection">
+          <span class="companion-join-label">Mis Torneos Recientes:</span>
+          <div class="recent-rooms-list" id="recentRoomsList"></div>
+        </div>
       </div>
 
       <!-- Tarjeta de Resumen en Vivo del Torneo -->
@@ -395,6 +401,40 @@
               <div class="round-pills-bar" id="roundPillsContainer"></div>
             </div>
 
+            <!-- Temporizador / Reloj de Ronda Sincronizado en Vivo -->
+            <div class="round-timer-panel" id="roundTimerPanel">
+              <div class="timer-display-group">
+                <div class="timer-clock-box" id="roundTimerClockBox">
+                  <span class="timer-label">TIEMPO DE RONDA</span>
+                  <strong class="timer-digits" id="roundTimerDisplay">01:30:00</strong>
+                </div>
+                <span class="timer-status-pill" id="roundTimerStatusBadge">EN PAUSA</span>
+              </div>
+
+              <!-- Controles del Reloj (Solo Organizador) -->
+              <div class="timer-controls-group admin-only-block">
+                <div class="timer-duration-input">
+                  <label for="inputTimerMinutes">Min:</label>
+                  <input type="number" id="inputTimerMinutes" min="1" max="360" value="90" title="Duración de la ronda en minutos" />
+                  <button type="button" class="btn-elven-outline btn-sm" id="btnSetTimerMinutes">Fijar</button>
+                </div>
+                <button type="button" class="btn-gold-cta btn-sm" id="btnToggleTimerRun">▶ Iniciar</button>
+                <button type="button" class="btn-elven-outline btn-sm" id="btnResetTimer" title="Reiniciar reloj de esta ronda">↺ Reiniciar</button>
+              </div>
+
+              <!-- Botón de Votación accesible para Jugadores y Organizador -->
+              <div class="timer-player-actions">
+                <button type="button" class="btn-elven-outline btn-sm" id="btnOpenVotingFromRounds">
+                  🎨 🤝 Votar Pintura y Fair Play
+                </button>
+              </div>
+            </div>
+
+            <!-- Alerta de Últimos 15 Minutos -->
+            <div class="timer-15min-alert hidden" id="roundTimer15MinAlert">
+              ⏳ <strong>¡ATENCIÓN MESAS!</strong> Quedan menos de <strong>15 minutos</strong> para finalizar el tiempo de la ronda.
+            </div>
+
             <!-- Buscador Rápido de Mesa / Jugador -->
             <div class="player-search-row">
               <input type="text" id="inputFilterPlayerMatch" placeholder="🔍 Buscar jugador, equipo o número de mesa en esta ronda..." />
@@ -416,6 +456,9 @@
               </button>
               <button class="btn-elven-outline btn-compact" id="btnClearCurrentRound" title="Limpiar los datos de esta ronda">
                 Limpiar Ronda
+              </button>
+              <button class="btn-gold-cta btn-compact hidden" id="btnFinalizeTournamentFromRounds" title="Cerrar oficialmente el torneo y mostrar el Podio Final">
+                🏁 FINALIZAR TORNEO
               </button>
             </div>
           </div>
@@ -445,8 +488,29 @@
         <!-- VISTA 3: PODIO Y SÁBANA DE RESUMEN                       -->
         <!-- ======================================================== -->
         <section class="tab-view" id="view-podium">
+          <!-- Banner de Torneo Finalizado -->
+          <div class="tournament-finished-banner hidden" id="tournamentFinishedBanner">
+            <span>🏆 <strong>TORNEO OFICIALMENTE FINALIZADO</strong> — Resultados definitivos y cuadro de honor cerrados.</span>
+          </div>
+
           <!-- Tarjetas Destacadas de Podio (1° Oro, 2° Plata, 3° Bronce, Último Activo) -->
           <div class="podium-showcase" id="podiumTopCards"></div>
+
+          <!-- Reconocimientos Especiales: Mejor Pintura, General Más Letal y Fair Play -->
+          <div class="elven-block special-awards-block">
+            <div class="block-header-flex">
+              <div>
+                <span class="elven-section-label">RECONOCIMIENTOS ESPECIALES DEL TORNEO</span>
+                <p class="helper-caption">Votación abierta para todos los participantes (Mejor Pintura y Fair Play) y cálculo automático de General Más Letal.</p>
+              </div>
+              <div class="inline-add-group">
+                <button type="button" class="btn-gold-cta btn-sm" id="btnOpenVotingModal">
+                  🗳️ Votar Mejor Pintura y Fair Play
+                </button>
+              </div>
+            </div>
+            <div class="special-awards-grid" id="specialAwardsShowcase"></div>
+          </div>
 
           <!-- Tabla Completa de Posiciones -->
           <div class="elven-block">
@@ -456,6 +520,7 @@
                 <p class="helper-caption">Criterio de desempate: 1° No Abandono • 2° Puntos de Torneo Final • 3° Diferencia de PV • 4° PV a Favor</p>
               </div>
               <div class="inline-add-group">
+                <button class="btn-finish-round btn-sm admin-only-block" id="btnFinalizeTournamentPodium">🏁 Finalizar Torneo</button>
                 <button class="btn-gold-cta btn-sm" id="btnDownloadIgStory">📸 Descargar Resultado</button>
                 <button class="btn-elven-outline btn-sm" id="btnShowFinalDialog">🏆 Podio Final</button>
                 <button class="btn-elven-outline btn-sm" id="btnToggleDetailedResumen">📋 Ver Sábana Resumen R1–RN</button>
@@ -516,6 +581,8 @@
       <div class="celebration-pedestals" id="celebrationPedestalsContainer"></div>
 
       <div class="celebration-spoon-Slot" id="celebrationSpoonSlot"></div>
+
+      <div class="celebration-special-awards" id="celebrationSpecialAwardsSlot"></div>
 
       <div class="celebration-actions">
         <button class="btn-gold-cta" id="btnDownloadStoryFromCelebration">

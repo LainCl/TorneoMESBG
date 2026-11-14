@@ -6,6 +6,8 @@
   const STORAGE_KEY = 'mesbg_torneo_state_v2';
   const ROOMS_REGISTRY_KEY = 'mesbg_rooms_registry_v1';
   const OWNED_ROOMS_KEY = 'mesbg_owned_rooms_v1';
+  const RECENT_ROOMS_KEY = 'mesbg_recent_rooms_v1';
+  const VOTER_IDENTITY_KEY = 'mesbg_voter_identity_v1';
   const FIREBASE_URL_STORAGE_KEY = 'mesbg_firebase_db_url';
   const ADMIN_SESSION_KEY = 'mesbg_admin_unlocked';
 
@@ -16,6 +18,9 @@
   let cloudEventSource = null;
   let cloudPollTimer = null;
   let isApplyingRemoteUpdate = false;
+  let timerIntervalId = null;
+  const warned15MinByRound = {};
+  const warnedExpiredByRound = {};
 
   // =========================================================================
   // 1. INICIALIZACIÓN, CÓDIGO COMPANION Y PERSISTENCIA DEL ESTADO
@@ -57,6 +62,46 @@
     return getOwnedRooms().includes(roomCode);
   }
 
+  function getRecentRooms() {
+    try {
+      const list = JSON.parse(localStorage.getItem(RECENT_ROOMS_KEY) || '[]');
+      return Array.isArray(list) ? list : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function addOrUpdateRecentRoom(tournamentState) {
+    if (!tournamentState || !tournamentState.roomCode) return;
+    try {
+      const code = tournamentState.roomCode.toUpperCase();
+      const name = tournamentState.tournamentName || 'Torneo MESBG';
+      let list = getRecentRooms().filter((item) => item && item.code !== code);
+      list.unshift({
+        code,
+        name,
+        updatedAt: Date.now()
+      });
+      if (list.length > 6) {
+        list = list.slice(0, 6);
+      }
+      localStorage.setItem(RECENT_ROOMS_KEY, JSON.stringify(list));
+    } catch (e) {
+      // Ignorar
+    }
+  }
+
+  function removeRecentRoom(code) {
+    if (!code) return;
+    try {
+      const clean = code.toUpperCase();
+      const list = getRecentRooms().filter((item) => item && item.code !== clean);
+      localStorage.setItem(RECENT_ROOMS_KEY, JSON.stringify(list));
+    } catch (e) {
+      // Ignorar
+    }
+  }
+
   function normalizeState(s) {
     if (!s || typeof s !== 'object') return buildCleanInitialState();
     s.roomCode = (s.roomCode || generateRoomCode()).toUpperCase();
@@ -69,6 +114,8 @@
     s.membersPerTeam = Math.max(2, Number(s.membersPerTeam) || 4);
     s.tablesPerTeam = Math.max(1, Number(s.tablesPerTeam) || 4);
     s.activeRound = Math.max(1, Number(s.activeRound) || 1);
+    s.tournamentFinished = !!s.tournamentFinished;
+    s.votes = s.votes && typeof s.votes === 'object' ? s.votes : {};
     s.players = Array.isArray(s.players) ? s.players : [];
     s.teams = Array.isArray(s.teams)
       ? s.teams.map((t, i) => ({
@@ -95,12 +142,34 @@
           finished: false,
           podiumUpdated: false,
           teamClashes: [],
-          matches: []
+          matches: [],
+          timer: {
+            durationMinutes: 90,
+            remainingMs: 90 * 60 * 1000,
+            endTime: null,
+            running: false
+          }
         };
         s.rounds.push(rObj);
       } else {
         rObj.matches = Array.isArray(rObj.matches) ? rObj.matches : [];
         rObj.teamClashes = Array.isArray(rObj.teamClashes) ? rObj.teamClashes : [];
+        if (!rObj.timer || typeof rObj.timer !== 'object') {
+          rObj.timer = {
+            durationMinutes: 90,
+            remainingMs: 90 * 60 * 1000,
+            endTime: null,
+            running: false
+          };
+        } else {
+          rObj.timer.durationMinutes = Math.max(1, Number(rObj.timer.durationMinutes) || 90);
+          rObj.timer.remainingMs =
+            typeof rObj.timer.remainingMs === 'number'
+              ? Math.max(0, rObj.timer.remainingMs)
+              : rObj.timer.durationMinutes * 60 * 1000;
+          rObj.timer.running = !!rObj.timer.running;
+          rObj.timer.endTime = rObj.timer.running ? Number(rObj.timer.endTime) || null : null;
+        }
       }
     }
     s.rounds.sort((a, b) => Number(a.round) - Number(b.round));
@@ -117,6 +186,7 @@
       const reg = JSON.parse(localStorage.getItem(ROOMS_REGISTRY_KEY) || '{}');
       reg[tournamentState.roomCode] = tournamentState;
       localStorage.setItem(ROOMS_REGISTRY_KEY, JSON.stringify(reg));
+      addOrUpdateRecentRoom(tournamentState);
     } catch (e) {
       console.warn('No se pudo actualizar registro local de salas:', e);
     }
@@ -148,7 +218,13 @@
         finished: false,
         podiumUpdated: false,
         teamClashes: [],
-        matches: []
+        matches: [],
+        timer: {
+          durationMinutes: 90,
+          remainingMs: 90 * 60 * 1000,
+          endTime: null,
+          running: false
+        }
       });
     }
 
@@ -163,6 +239,8 @@
       membersPerTeam,
       tablesPerTeam,
       activeRound: 1,
+      tournamentFinished: false,
+      votes: {},
       players: [],
       teams: createDefaultTeams(teamCount, membersPerTeam),
       tableGroups: createTableGroups(16, tablesPerTeam),
@@ -334,6 +412,33 @@
     }
   }
 
+  async function submitPlayerVoteToCloud(voterKey, voteObj) {
+    if (!state.votes || typeof state.votes !== 'object') {
+      state.votes = {};
+    }
+    state.votes[voterKey] = voteObj;
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      saveRoomToLocalRegistry(state);
+    } catch (e) {
+      // Ignorar
+    }
+
+    const dbUrl = getFirebaseDbUrl();
+    const code = (state.roomCode || 'DEFAULT').toUpperCase();
+    if (!dbUrl) return;
+    const voteEndpoint = `${dbUrl}/torneos/${code}/votes/${encodeURIComponent(voterKey)}.json`;
+    try {
+      await fetch(voteEndpoint, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(voteObj)
+      });
+    } catch (err) {
+      console.warn('Error al guardar voto en Firebase:', err);
+    }
+  }
+
   async function pullStateFromCloud() {
     const endpoint = getRoomCloudEndpoint(state.roomCode);
     if (!endpoint) {
@@ -357,6 +462,15 @@
           saveRoomToLocalRegistry(state);
           renderAll();
           isApplyingRemoteUpdate = false;
+        } else if (cleanRemote.votes && Object.keys(cleanRemote.votes).length > 0) {
+          // Sincronizar votos de los jugadores en tiempo real incluso si este dispositivo es el Organizador
+          const prevVotesJson = JSON.stringify(state.votes || {});
+          state.votes = { ...(state.votes || {}), ...cleanRemote.votes };
+          if (JSON.stringify(state.votes) !== prevVotesJson) {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+            saveRoomToLocalRegistry(state);
+            renderPodiumView();
+          }
         }
         updateLiveSyncBadge(`🟢 SALA ${state.roomCode}`, true);
         return true;
@@ -1018,6 +1132,190 @@
     };
     document.getElementById('badgeCurrentMode').textContent =
       `${modeNames[state.mode]} • ${scoreNames[state.scoringSystem]}`;
+
+    renderRecentRoomsList();
+  }
+
+  function renderRecentRoomsList() {
+    const listEl = document.getElementById('recentRoomsList');
+    const secEl = document.getElementById('recentRoomsSection');
+    if (!listEl || !secEl) return;
+
+    addOrUpdateRecentRoom(state);
+    const rooms = getRecentRooms();
+    if (rooms.length === 0) {
+      secEl.classList.add('hidden');
+      return;
+    }
+    secEl.classList.remove('hidden');
+
+    listEl.innerHTML = rooms
+      .map((item) => {
+        const isCurrent = item.code === state.roomCode;
+        const owned = isRoomOwnedByMe(item.code);
+        return `
+          <div class="recent-room-item ${isCurrent ? 'active-room' : ''}">
+            <button type="button" class="recent-room-btn" data-recent-code="${escapeHtml(item.code)}" title="Entrar a sala ${escapeHtml(item.code)}">
+              <span class="recent-room-code">${escapeHtml(item.code)}</span>
+              <span class="recent-room-name">${escapeHtml(item.name || 'Torneo MESBG')}</span>
+              <span class="recent-room-role ${owned ? 'is-owner' : ''}">${owned ? 'Organizador' : 'Jugador'}</span>
+            </button>
+            ${
+              !isCurrent
+                ? `<button type="button" class="recent-room-del" data-del-recent="${escapeHtml(item.code)}" title="Quitar de recientes">✕</button>`
+                : ''
+            }
+          </div>
+        `;
+      })
+      .join('');
+
+    listEl.querySelectorAll('button[data-recent-code]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        const code = e.currentTarget.dataset.recentCode;
+        if (code && code !== state.roomCode) {
+          joinTournamentByCode(code);
+        }
+      });
+    });
+
+    listEl.querySelectorAll('button[data-del-recent]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const code = e.currentTarget.dataset.delRecent;
+        removeRecentRoom(code);
+        renderRecentRoomsList();
+      });
+    });
+  }
+
+  // =========================================================================
+  // 4B. TEMPORIZADOR / RELOJ DE RONDA SINCRONIZADO EN VIVO
+  // =========================================================================
+
+  function getRoundRemainingMs(rObj) {
+    if (!rObj || !rObj.timer) return 90 * 60 * 1000;
+    if (rObj.timer.running && rObj.timer.endTime) {
+      return Math.max(0, Number(rObj.timer.endTime) - Date.now());
+    }
+    return Math.max(0, Number(rObj.timer.remainingMs ?? 90 * 60 * 1000));
+  }
+
+  function formatTimerMs(ms) {
+    const totalSec = Math.max(0, Math.ceil(ms / 1000));
+    const hrs = Math.floor(totalSec / 3600);
+    const mins = Math.floor((totalSec % 3600) / 60);
+    const secs = totalSec % 60;
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${pad(hrs)}:${pad(mins)}:${pad(secs)}`;
+  }
+
+  function playTimerAlertSound() {
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      [523.25, 659.25, 783.99].forEach((freq, idx) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0.14, ctx.currentTime + idx * 0.16);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + idx * 0.16 + 0.35);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(ctx.currentTime + idx * 0.16);
+        osc.stop(ctx.currentTime + idx * 0.16 + 0.36);
+      });
+    } catch (e) {
+      // Ignorar si el navegador bloquea audio sin interacción
+    }
+  }
+
+  function updateRoundTimerUI() {
+    const rObj = (state.rounds || []).find((x) => Number(x.round) === Number(state.activeRound));
+    if (!rObj) return;
+    if (!rObj.timer) {
+      rObj.timer = {
+        durationMinutes: 90,
+        remainingMs: 90 * 60 * 1000,
+        endTime: null,
+        running: false
+      };
+    }
+
+    const remMs = getRoundRemainingMs(rObj);
+    const isRunning = !!rObj.timer.running && remMs > 0;
+    const isWarning15m = remMs > 0 && remMs <= 15 * 60 * 1000;
+    const isExpired = remMs <= 0 && (rObj.timer.running || rObj.timer.remainingMs === 0);
+
+    const displayEl = document.getElementById('roundTimerDisplay');
+    const badgeEl = document.getElementById('roundTimerStatusBadge');
+    const clockBox = document.getElementById('roundTimerClockBox');
+    const alert15El = document.getElementById('roundTimer15MinAlert');
+    const btnToggle = document.getElementById('btnToggleTimerRun');
+    const inputMins = document.getElementById('inputTimerMinutes');
+
+    if (displayEl) {
+      displayEl.textContent = formatTimerMs(remMs);
+    }
+
+    if (inputMins && document.activeElement !== inputMins) {
+      inputMins.value = rObj.timer.durationMinutes || 90;
+    }
+
+    if (clockBox) {
+      clockBox.classList.toggle('warning-15m', isWarning15m);
+      clockBox.classList.toggle('expired', isExpired);
+    }
+
+    if (alert15El) {
+      alert15El.classList.toggle('hidden', !isWarning15m);
+    }
+
+    if (badgeEl) {
+      badgeEl.className = 'timer-status-pill';
+      if (isExpired) {
+        badgeEl.textContent = 'TIEMPO FINALIZADO';
+        badgeEl.classList.add('expired');
+      } else if (isWarning15m && isRunning) {
+        badgeEl.textContent = 'ÚLTIMOS 15 MIN';
+        badgeEl.classList.add('warning');
+      } else if (isRunning) {
+        badgeEl.textContent = 'EN CURSO';
+        badgeEl.classList.add('running');
+      } else {
+        badgeEl.textContent = 'EN PAUSA';
+      }
+    }
+
+    if (btnToggle) {
+      btnToggle.textContent = isRunning ? '⏸ Pausar' : '▶ Iniciar';
+    }
+
+    const roundKey = `${state.roomCode}_R${rObj.round}`;
+    if (isRunning && isWarning15m && !warned15MinByRound[roundKey]) {
+      warned15MinByRound[roundKey] = true;
+      playTimerAlertSound();
+      showToast(`⏳ ¡Atención! Quedan 15 minutos o menos en la Ronda ${rObj.round}.`);
+    }
+
+    if (rObj.timer.running && remMs <= 0 && !warnedExpiredByRound[roundKey]) {
+      warnedExpiredByRound[roundKey] = true;
+      rObj.timer.running = false;
+      rObj.timer.remainingMs = 0;
+      rObj.timer.endTime = null;
+      playTimerAlertSound();
+      showToast(`🔔 ¡El tiempo de la Ronda ${rObj.round} ha finalizado!`);
+      if (isAdminMode) {
+        saveState();
+      }
+    }
+  }
+
+  function startGlobalTimerTicker() {
+    if (timerIntervalId) clearInterval(timerIntervalId);
+    timerIntervalId = setInterval(updateRoundTimerUI, 1000);
   }
 
   function renderSetupView() {
@@ -1177,6 +1475,17 @@
       totalM > 0
         ? `Ronda ${state.activeRound} — ${completedMatches} de ${totalM} mesas con resultado registrado${stateLabel}`
         : `Ronda ${state.activeRound} — Sin emparejamientos generados aún. Presiona "Emparejar Rondas"`;
+
+    updateRoundTimerUI();
+
+    const btnFinalizeFromRounds = document.getElementById('btnFinalizeTournamentFromRounds');
+    if (btnFinalizeFromRounds) {
+      const lastRoundObj = state.rounds.find((x) => Number(x.round) === Number(state.totalRounds));
+      const isLastRoundReady =
+        Number(state.activeRound) === Number(state.totalRounds) ||
+        (lastRoundObj && lastRoundObj.finished);
+      btnFinalizeFromRounds.classList.toggle('hidden', !isLastRoundReady);
+    }
 
     // Panel de Equipos
     const teamPanel = document.getElementById('teamRoundPairingPanel');
@@ -1513,13 +1822,108 @@
   }
 
   // =========================================================================
-  // 5. RENDERIZADO DEL PODIO Y RESUMEN
+  // 5. RENDERIZADO DEL PODIO, RECONOCIMIENTOS ESPECIALES Y RESUMEN
   // =========================================================================
+
+  function calculateSpecialAwards(standings) {
+    const list = standings || calculateStandings();
+
+    // 1. General Más Letal: mayor cantidad de PV a Favor acumulados (desempate por Dif. PV y PT Final)
+    const lethalCandidates = [...list].filter((row) => !row.abandoned && Number(row.vpFavor) > 0);
+    lethalCandidates.sort((a, b) => {
+      if (b.vpFavor !== a.vpFavor) return b.vpFavor - a.vpFavor;
+      if (b.vpDiff !== a.vpDiff) return b.vpDiff - a.vpDiff;
+      return b.finalTp - a.finalTp;
+    });
+    const lethalGeneral = lethalCandidates[0] || null;
+
+    // 2. Votación de Mejor Pintura y Premio Fair Play
+    const paintCounts = {};
+    const fairPlayCounts = {};
+    let totalPaintVotes = 0;
+    let totalFairPlayVotes = 0;
+
+    const votesMap = state.votes && typeof state.votes === 'object' ? state.votes : {};
+    Object.values(votesMap).forEach((v) => {
+      if (!v || typeof v !== 'object') return;
+      if (v.paintVote && String(v.paintVote).trim()) {
+        const pName = String(v.paintVote).trim();
+        paintCounts[pName] = (paintCounts[pName] || 0) + 1;
+        totalPaintVotes++;
+      }
+      if (v.fairPlayVote && String(v.fairPlayVote).trim()) {
+        const fpName = String(v.fairPlayVote).trim();
+        fairPlayCounts[fpName] = (fairPlayCounts[fpName] || 0) + 1;
+        totalFairPlayVotes++;
+      }
+    });
+
+    function getTopVoted(countsMap, total) {
+      const entries = Object.entries(countsMap);
+      if (entries.length === 0) return null;
+      entries.sort((a, b) => b[1] - a[1]);
+      return {
+        name: entries[0][0],
+        votes: entries[0][1],
+        totalVotes: total
+      };
+    }
+
+    return {
+      lethalGeneral,
+      bestPaint: getTopVoted(paintCounts, totalPaintVotes),
+      bestFairPlay: getTopVoted(fairPlayCounts, totalFairPlayVotes),
+      totalVoters: Object.keys(votesMap).length
+    };
+  }
 
   function renderPodiumView() {
     const standings = calculateStandings();
     document.getElementById('thPlayerOrTeam').textContent =
       state.mode === 'teams' ? 'EQUIPO' : 'JUGADOR';
+
+    const finishedBanner = document.getElementById('tournamentFinishedBanner');
+    if (finishedBanner) {
+      finishedBanner.classList.toggle('hidden', !state.tournamentFinished);
+    }
+
+    const awards = calculateSpecialAwards(standings);
+    const awardsShowcaseEl = document.getElementById('specialAwardsShowcase');
+    if (awardsShowcaseEl) {
+      awardsShowcaseEl.innerHTML = `
+        <div class="special-award-card">
+          <span class="award-badge-title">⚔️ GENERAL MÁS LETAL</span>
+          <strong class="award-winner-name">${escapeHtml(awards.lethalGeneral ? awards.lethalGeneral.name : 'Por definir')}</strong>
+          <span class="award-sub-detail">${
+            awards.lethalGeneral
+              ? `${awards.lethalGeneral.vpFavor} PV a favor (Dif: ${
+                  awards.lethalGeneral.vpDiff > 0 ? '+' + awards.lethalGeneral.vpDiff : awards.lethalGeneral.vpDiff
+                })`
+              : 'Se calcula automáticamente según PV a favor'
+          }</span>
+        </div>
+
+        <div class="special-award-card">
+          <span class="award-badge-title">🎨 MEJOR PINTURA</span>
+          <strong class="award-winner-name">${escapeHtml(awards.bestPaint ? awards.bestPaint.name : 'Sin votos aún')}</strong>
+          <span class="award-sub-detail">${
+            awards.bestPaint
+              ? `${awards.bestPaint.votes} voto(s) de ${awards.bestPaint.totalVotes} emitido(s)`
+              : 'Votación abierta para los jugadores'
+          }</span>
+        </div>
+
+        <div class="special-award-card">
+          <span class="award-badge-title">🤝 PREMIO FAIR PLAY</span>
+          <strong class="award-winner-name">${escapeHtml(awards.bestFairPlay ? awards.bestFairPlay.name : 'Sin votos aún')}</strong>
+          <span class="award-sub-detail">${
+            awards.bestFairPlay
+              ? `${awards.bestFairPlay.votes} voto(s) de ${awards.bestFairPlay.totalVotes} emitido(s)`
+              : 'Votación abierta para los jugadores'
+          }</span>
+        </div>
+      `;
+    }
 
     const activePlayers = standings.filter((s) => !s.abandoned);
     const first = standings[0];
@@ -2192,6 +2596,113 @@
       });
     }
 
+    // Reloj de Ronda Sincronizado: Fijar minutos, Iniciar/Pausar y Reiniciar
+    const btnSetTimerMinutes = document.getElementById('btnSetTimerMinutes');
+    if (btnSetTimerMinutes) {
+      btnSetTimerMinutes.addEventListener('click', () => {
+        const rObj = state.rounds.find((x) => x.round === state.activeRound);
+        if (!rObj) return;
+        const inp = document.getElementById('inputTimerMinutes');
+        const mins = Math.max(1, Math.min(360, Number(inp?.value) || 90));
+        rObj.timer = {
+          durationMinutes: mins,
+          remainingMs: mins * 60 * 1000,
+          endTime: null,
+          running: false
+        };
+        delete alerted15MinRounds[`${state.roomCode}_${rObj.round}`];
+        delete alertedZeroRounds[`${state.roomCode}_${rObj.round}`];
+        saveState();
+        updateRoundTimerUI();
+        showToast(`⏱️ Tiempo de Ronda ${rObj.round} fijado en ${mins} minutos.`);
+      });
+    }
+
+    const btnToggleTimerRun = document.getElementById('btnToggleTimerRun');
+    if (btnToggleTimerRun) {
+      btnToggleTimerRun.addEventListener('click', () => {
+        const rObj = state.rounds.find((x) => x.round === state.activeRound);
+        if (!rObj) return;
+        if (!rObj.timer) {
+          const inp = document.getElementById('inputTimerMinutes');
+          const mins = Math.max(1, Math.min(360, Number(inp?.value) || 90));
+          rObj.timer = {
+            durationMinutes: mins,
+            remainingMs: mins * 60 * 1000,
+            endTime: null,
+            running: false
+          };
+        }
+        const t = rObj.timer;
+        if (t.running) {
+          // Pausar
+          const currentRem = getRoundRemainingMs(rObj);
+          t.remainingMs = currentRem;
+          t.endTime = null;
+          t.running = false;
+          saveState();
+          updateRoundTimerUI();
+          showToast(`⏸ Reloj de Ronda ${rObj.round} pausado.`);
+        } else {
+          // Iniciar / Reanudar
+          let currentRem = getRoundRemainingMs(rObj);
+          if (currentRem <= 0) {
+            const mins = Number(t.durationMinutes) || 90;
+            currentRem = mins * 60 * 1000;
+            delete alerted15MinRounds[`${state.roomCode}_${rObj.round}`];
+            delete alertedZeroRounds[`${state.roomCode}_${rObj.round}`];
+          }
+          t.remainingMs = currentRem;
+          t.endTime = Date.now() + currentRem;
+          t.running = true;
+          saveState();
+          updateRoundTimerUI();
+          showToast(`▶ Reloj de Ronda ${rObj.round} en marcha y sincronizado para todos los jugadores.`);
+        }
+      });
+    }
+
+    const btnResetTimer = document.getElementById('btnResetTimer');
+    if (btnResetTimer) {
+      btnResetTimer.addEventListener('click', () => {
+        const rObj = state.rounds.find((x) => x.round === state.activeRound);
+        if (!rObj) return;
+        const inp = document.getElementById('inputTimerMinutes');
+        const mins = Math.max(1, Math.min(360, Number(inp?.value) || Number(rObj.timer?.durationMinutes) || 90));
+        rObj.timer = {
+          durationMinutes: mins,
+          remainingMs: mins * 60 * 1000,
+          endTime: null,
+          running: false
+        };
+        delete alerted15MinRounds[`${state.roomCode}_${rObj.round}`];
+        delete alertedZeroRounds[`${state.roomCode}_${rObj.round}`];
+        saveState();
+        updateRoundTimerUI();
+        showToast(`↺ Reloj de Ronda ${rObj.round} reiniciado a ${mins}:00.`);
+      });
+    }
+
+    // Votación de Mejor Pintura y Fair Play
+    const btnOpenVotingFromRounds = document.getElementById('btnOpenVotingFromRounds');
+    if (btnOpenVotingFromRounds) {
+      btnOpenVotingFromRounds.addEventListener('click', openSpecialVotingModal);
+    }
+    const btnOpenVotingModal = document.getElementById('btnOpenVotingModal');
+    if (btnOpenVotingModal) {
+      btnOpenVotingModal.addEventListener('click', openSpecialVotingModal);
+    }
+
+    // Finalizar Torneo Oficialmente
+    const btnFinalizeFromRounds = document.getElementById('btnFinalizeTournamentFromRounds');
+    if (btnFinalizeFromRounds) {
+      btnFinalizeFromRounds.addEventListener('click', finalizeTournamentFlow);
+    }
+    const btnFinalizePodium = document.getElementById('btnFinalizeTournamentPodium');
+    if (btnFinalizePodium) {
+      btnFinalizePodium.addEventListener('click', finalizeTournamentFlow);
+    }
+
     // Sincronización instantánea entre pestañas del mismo navegador
     window.addEventListener('storage', (e) => {
       if (e.key === ROOMS_REGISTRY_KEY && state && state.roomCode) {
@@ -2203,6 +2714,154 @@
         }
       }
     });
+  }
+
+  function openSpecialVotingModal() {
+    const standings = calculateStandings();
+    const candidates = standings.map((s) => s.name).filter(Boolean);
+    if (candidates.length === 0) {
+      showToast('⚠️ Aún no hay participantes registrados en el torneo para votar.');
+      return;
+    }
+
+    let savedVoter = '';
+    try {
+      savedVoter = localStorage.getItem(`${VOTER_IDENTITY_KEY}_${state.roomCode}`) || '';
+    } catch (e) {
+      // Ignorar
+    }
+
+    const existingVote = savedVoter && state.votes && state.votes[savedVoter] ? state.votes[savedVoter] : null;
+    const currentPaint = existingVote?.paint || '';
+    const currentFairPlay = existingVote?.fairPlay || '';
+
+    const voterOptionsHtml = [
+      `<option value="">-- Selecciona tu nombre en el torneo --</option>`,
+      ...candidates.map(
+        (c) => `<option value="${escapeHtml(c)}" ${c === savedVoter ? 'selected' : ''}>${escapeHtml(c)}</option>`
+      )
+    ].join('');
+
+    const paintOptionsHtml = [
+      `<option value="">-- Elige tu voto para Mejor Pintura --</option>`,
+      ...candidates.map(
+        (c) => `<option value="${escapeHtml(c)}" ${c === currentPaint ? 'selected' : ''}>🎨 ${escapeHtml(c)}</option>`
+      )
+    ].join('');
+
+    const fairPlayOptionsHtml = [
+      `<option value="">-- Elige tu voto para Premio Fair Play --</option>`,
+      ...candidates.map(
+        (c) => `<option value="${escapeHtml(c)}" ${c === currentFairPlay ? 'selected' : ''}>🤝 ${escapeHtml(c)}</option>`
+      )
+    ].join('');
+
+    openModal(
+      '🗳️ Votación de Reconocimientos Especiales',
+      `
+        <p style="margin-bottom:14px; color:var(--text-parchment);">
+          Cada participante puede emitir su voto para <strong>🎨 Mejor Pintura</strong> y <strong>🤝 Premio Fair Play</strong>. Los resultados se actualizan en tiempo real en el Podio Final.
+        </p>
+
+        <div class="field-group" style="margin-bottom:14px;">
+          <label for="selectVoterIdentity">1. ¿Quién eres? (Tu Nombre / Participante)</label>
+          <select id="selectVoterIdentity">${voterOptionsHtml}</select>
+        </div>
+
+        <div class="field-group" style="margin-bottom:14px;">
+          <label for="selectVoteBestPaint">2. Tu voto para 🎨 Mejor Pintura</label>
+          <select id="selectVoteBestPaint">${paintOptionsHtml}</select>
+        </div>
+
+        <div class="field-group" style="margin-bottom:18px;">
+          <label for="selectVoteFairPlay">3. Tu voto para 🤝 Premio Fair Play (Deportividad)</label>
+          <select id="selectVoteFairPlay">${fairPlayOptionsHtml}</select>
+        </div>
+
+        <div class="modal-confirm-actions">
+          <button type="button" class="btn-elven-outline" id="btnCancelVoteModal">Cancelar</button>
+          <button type="button" class="btn-gold-cta" id="btnSubmitVoteModal">🗳️ Registrar Mi Voto</button>
+        </div>
+      `
+    );
+
+    const selectVoterEl = document.getElementById('selectVoterIdentity');
+    const selectPaintEl = document.getElementById('selectVoteBestPaint');
+    const selectFairEl = document.getElementById('selectVoteFairPlay');
+
+    if (selectVoterEl) {
+      selectVoterEl.addEventListener('change', () => {
+        const who = selectVoterEl.value;
+        const prev = who && state.votes && state.votes[who] ? state.votes[who] : null;
+        if (prev) {
+          if (prev.paint && selectPaintEl) selectPaintEl.value = prev.paint;
+          if (prev.fairPlay && selectFairEl) selectFairEl.value = prev.fairPlay;
+        }
+      });
+    }
+
+    document.getElementById('btnCancelVoteModal')?.addEventListener('click', closeModal);
+    document.getElementById('btnSubmitVoteModal')?.addEventListener('click', async () => {
+      const voterName = (selectVoterEl?.value || '').trim();
+      const paintVote = (selectPaintEl?.value || '').trim();
+      const fairPlayVote = (selectFairEl?.value || '').trim();
+
+      if (!voterName) {
+        showToast('⚠️ Por favor selecciona tu nombre en la lista de participantes.');
+        return;
+      }
+      if (!paintVote && !fairPlayVote) {
+        showToast('⚠️ Selecciona al menos un candidato para Mejor Pintura o Fair Play.');
+        return;
+      }
+
+      const voterKey = voterName.replace(/[.#$/[\]]/g, '_');
+      try {
+        localStorage.setItem(`${VOTER_IDENTITY_KEY}_${state.roomCode}`, voterKey);
+      } catch (e) {
+        // Ignorar
+      }
+
+      await submitPlayerVoteToCloud(voterKey, {
+        voter: voterName,
+        paint: paintVote,
+        fairPlay: fairPlayVote,
+        updatedAt: Date.now()
+      });
+
+      closeModal();
+      renderPodiumView();
+      showToast(`✅ ¡Voto de ${voterName} registrado con éxito!`);
+    });
+  }
+
+  function finalizeTournamentFlow() {
+    if (!isAdminMode) {
+      showToast('🔒 Solo el Organizador puede finalizar oficialmente el torneo.');
+      return;
+    }
+
+    openConfirmModal(
+      '🏁 Finalizar Torneo y Generar Podio Oficial',
+      '¿Confirmas que la última ronda ha concluido y deseas proclamar el Podio Oficial junto con los Reconocimientos Especiales (Mejor Pintura, General Más Letal y Fair Play)?',
+      '🏁 Sí, Finalizar Torneo',
+      () => {
+        state.rounds.forEach((r) => {
+          r.finished = true;
+          if (r.timer && r.timer.running) {
+            r.timer.remainingMs = getRoundRemainingMs(r);
+            r.timer.endTime = null;
+            r.timer.running = false;
+          }
+        });
+        state.tournamentFinished = true;
+        saveState();
+        switchTab('podium');
+        renderAll();
+        launchPodiumCelebration();
+        showToast('🏆 ¡Torneo finalizado oficialmente! Podio y reconocimientos proclamados.');
+      }
+    );
   }
 
   function promptCreateNewRoom() {
@@ -2469,6 +3128,30 @@
           <span><strong>Cuchara de Palo (Último Activo):</strong> ${escapeHtml(lastActive.name)} (${lastActive.finalTp} PT)</span>
         </div>`
       : '';
+
+    const specialAwardsSlot = document.getElementById('celebrationSpecialAwardsSlot');
+    if (specialAwardsSlot) {
+      const awards = calculateSpecialAwards(standings);
+      specialAwardsSlot.innerHTML = `
+        <div class="celebration-special-awards">
+          <span class="celebration-special-pill">⚔️ <strong>General Más Letal:</strong> ${
+            awards.mostLethal
+              ? `${escapeHtml(awards.mostLethal.name)} (${awards.mostLethal.vpFavor} PV)`
+              : 'Por definir'
+          }</span>
+          <span class="celebration-special-pill">🎨 <strong>Mejor Pintura:</strong> ${
+            awards.bestPaint
+              ? `${escapeHtml(awards.bestPaint.name)} (${awards.bestPaint.votes} voto${awards.bestPaint.votes === 1 ? '' : 's'})`
+              : 'Sin votos aún'
+          }</span>
+          <span class="celebration-special-pill">🤝 <strong>Premio Fair Play:</strong> ${
+            awards.fairPlay
+              ? `${escapeHtml(awards.fairPlay.name)} (${awards.fairPlay.votes} voto${awards.fairPlay.votes === 1 ? '' : 's'})`
+              : 'Sin votos aún'
+          }</span>
+        </div>
+      `;
+    }
 
     const overlay = document.getElementById('podiumCelebrationOverlay');
     overlay.classList.remove('hidden');
@@ -2859,5 +3542,6 @@
     applyRoleModeUI();
     renderAll();
     startCloudRealtimeSync();
+    startGlobalTimerTicker();
   });
 })();

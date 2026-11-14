@@ -1965,6 +1965,338 @@ body.spectator-mode .match-card .match-table-input {
   width: auto;
 }
 
+/* ==========================================================================
+   MIS TORNEOS RECIENTES, TEMPORIZADOR DE RONDA Y RECONOCIMIENTOS ESPECIALES
+   ========================================================================== */
+.companion-recent-box {
+  border-top: 1px solid rgba(169, 189, 179, 0.15);
+  margin-top: 10px;
+  padding-top: 9px;
+  text-align: left;
+}
+
+.recent-rooms-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 135px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.recent-room-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  background: rgba(8, 15, 13, 0.78);
+  border: 1px solid rgba(202, 165, 84, 0.28);
+  border-radius: 8px;
+  padding: 5px 8px;
+  font-size: 0.72rem;
+  color: var(--text-ivory);
+  transition: all 0.18s ease;
+}
+
+.recent-room-item.active-room {
+  border-color: var(--gold-primary);
+  background: rgba(212, 168, 67, 0.14);
+}
+
+.recent-room-btn {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-family: var(--font-sans);
+  font-size: 0.72rem;
+}
+
+.recent-room-code {
+  font-family: var(--font-serif);
+  font-weight: 800;
+  color: var(--gold-bright);
+  letter-spacing: 0.08em;
+  flex-shrink: 0;
+}
+
+.recent-room-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-cream);
+}
+
+.recent-room-role {
+  font-size: 0.62rem;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.recent-room-role.is-owner {
+  background: rgba(212, 168, 67, 0.2);
+  color: var(--gold-bright);
+}
+
+.recent-room-del {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.75rem;
+  padding: 2px 4px;
+}
+
+.recent-room-del:hover {
+  color: var(--loss-red);
+}
+
+/* Temporizador / Reloj de Ronda Sincronizado */
+.round-timer-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  background: linear-gradient(90deg, rgba(9, 18, 15, 0.92) 0%, rgba(16, 30, 26, 0.92) 100%);
+  border: 1px solid var(--border-gold);
+  border-radius: 12px;
+  padding: 10px 14px;
+  margin-bottom: 10px;
+}
+
+.timer-display-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.timer-clock-box {
+  display: flex;
+  flex-direction: column;
+}
+
+.timer-label {
+  font-family: var(--font-serif);
+  font-size: 0.62rem;
+  letter-spacing: 0.14em;
+  color: var(--gold-muted);
+}
+
+.timer-digits {
+  font-family: var(--font-serif);
+  font-size: 1.55rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  color: var(--gold-bright);
+  line-height: 1.1;
+  text-shadow: 0 2px 10px rgba(212, 168, 67, 0.35);
+}
+
+.timer-clock-box.warning-15m .timer-digits {
+  color: #ffb74d;
+  animation: pulseTimerWarn 1.2s ease-in-out infinite;
+}
+
+.timer-clock-box.expired .timer-digits {
+  color: #ff6b6b;
+}
+
+@keyframes pulseTimerWarn {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.75; transform: scale(1.03); }
+}
+
+.timer-status-pill {
+  font-family: var(--font-serif);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(169, 189, 179, 0.25);
+  color: var(--text-cream);
+}
+
+.timer-status-pill.running {
+  background: rgba(56, 178, 124, 0.22);
+  border-color: var(--win-green);
+  color: #6ee7b0;
+}
+
+.timer-status-pill.warning {
+  background: rgba(217, 155, 56, 0.28);
+  border-color: var(--draw-amber);
+  color: #ffd27d;
+}
+
+.timer-status-pill.expired {
+  background: rgba(217, 83, 79, 0.28);
+  border-color: var(--loss-red);
+  color: #ff9c99;
+}
+
+.timer-controls-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.timer-duration-input {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(7, 14, 12, 0.85);
+  border: 1px solid rgba(169, 189, 179, 0.22);
+  border-radius: 8px;
+  padding: 3px 6px 3px 8px;
+}
+
+.timer-duration-input label {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.timer-duration-input input[type="number"] {
+  width: 58px;
+  padding: 4px 6px !important;
+  text-align: center;
+  font-weight: 700;
+  font-size: 0.82rem;
+}
+
+.timer-15min-alert {
+  background: linear-gradient(90deg, rgba(168, 98, 18, 0.38) 0%, rgba(112, 61, 10, 0.38) 100%);
+  border: 1px solid #f0ad4e;
+  border-radius: 10px;
+  padding: 9px 14px;
+  margin-bottom: 10px;
+  color: #ffe2b0;
+  font-size: 0.82rem;
+  text-align: center;
+  box-shadow: 0 4px 16px rgba(240, 173, 78, 0.2);
+}
+
+/* Reconocimientos Especiales (Mejor Pintura, General Más Letal, Fair Play) */
+.special-awards-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.special-award-card {
+  background: linear-gradient(155deg, rgba(22, 39, 34, 0.88) 0%, rgba(11, 20, 18, 0.95) 100%);
+  border: 1px solid var(--border-gold);
+  border-radius: 12px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.award-badge-title {
+  font-family: var(--font-serif);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--gold-primary);
+  text-transform: uppercase;
+}
+
+.award-winner-name {
+  font-family: var(--font-serif);
+  font-size: 1.02rem;
+  font-weight: 800;
+  color: #fff;
+  word-break: break-word;
+}
+
+.award-sub-detail {
+  font-size: 0.74rem;
+  color: var(--text-muted);
+}
+
+.tournament-finished-banner {
+  background: linear-gradient(90deg, rgba(130, 99, 20, 0.45) 0%, rgba(40, 74, 58, 0.55) 100%);
+  border: 1.5px solid var(--gold-primary);
+  border-radius: 12px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  text-align: center;
+  font-family: var(--font-serif);
+  font-size: 0.86rem;
+  color: var(--gold-bright);
+  letter-spacing: 0.06em;
+  box-shadow: 0 6px 20px rgba(212, 168, 67, 0.22);
+}
+
+.celebration-special-awards {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 22px;
+}
+
+.celebration-award-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(12, 24, 21, 0.88);
+  border: 1px solid var(--border-gold);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-family: var(--font-serif);
+  font-size: 0.76rem;
+  color: var(--text-ivory);
+}
+
+.celebration-award-pill strong {
+  color: var(--gold-bright);
+}
+
+@media (max-width: 768px) {
+  .special-awards-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .round-timer-panel {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .timer-display-group {
+    justify-content: space-between;
+  }
+
+  .timer-controls-group {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .timer-player-actions,
+  .timer-player-actions button {
+    width: 100%;
+  }
+}
+
 .hidden {
   display: none !important;
 }
