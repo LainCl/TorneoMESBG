@@ -16,11 +16,26 @@
   let isAdminMode = false;
   let searchFilterQuery = '';
   let cloudEventSource = null;
+  let votesEventSource = null;
   let cloudPollTimer = null;
   let isApplyingRemoteUpdate = false;
   let timerIntervalId = null;
   const warned15MinByRound = {};
   const warnedExpiredByRound = {};
+
+  function syncUrlWithRoomCode(roomCode) {
+    if (!roomCode) return;
+    try {
+      const cleanCode = String(roomCode).trim().toUpperCase();
+      const url = new URL(window.location.href);
+      if (url.searchParams.get('code') !== cleanCode) {
+        url.searchParams.set('code', cleanCode);
+        window.history.replaceState({}, '', `${url.pathname}?${url.searchParams.toString()}`);
+      }
+    } catch (e) {
+      // Ignorar
+    }
+  }
 
   // =========================================================================
   // 1. INICIALIZACIÓN, CÓDIGO COMPANION Y PERSISTENCIA DEL ESTADO
@@ -350,6 +365,7 @@
       }
       isAdminMode = isRoomOwnedByMe(urlCodeParam);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      syncUrlWithRoomCode(state.roomCode);
       return;
     }
 
@@ -369,6 +385,7 @@
             markRoomAsOwned(state.roomCode);
           }
           isAdminMode = isRoomOwnedByMe(state.roomCode);
+          syncUrlWithRoomCode(state.roomCode);
           return;
         }
       }
@@ -379,6 +396,7 @@
     state = buildCleanInitialState();
     markRoomAsOwned(state.roomCode);
     isAdminMode = true;
+    syncUrlWithRoomCode(state.roomCode);
     saveState();
   }
 
@@ -403,6 +421,13 @@
     return `${dbUrl}/torneos/${code}.json`;
   }
 
+  function getRoomVotesEndpoint(roomCode) {
+    const dbUrl = getFirebaseDbUrl();
+    const code = (roomCode || state.roomCode || 'DEFAULT').toUpperCase();
+    if (!dbUrl) return '';
+    return `${dbUrl}/votos_torneos/${code}.json`;
+  }
+
   function getAdminPin() {
     return (window.MESBG_CLOUD_CONFIG && window.MESBG_CLOUD_CONFIG.ADMIN_PIN) || 'deazul2026';
   }
@@ -420,12 +445,12 @@
 
     try {
       updateLiveSyncBadge(`🔄 ${state.roomCode}`, true);
-      // Usar PATCH sin sobrescribir el nodo /votes que los jugadores actualizan en paralelo
+      // Guardar el estado del torneo en /torneos/{code} sin tocar /votos_torneos/{code}
       const payloadToPush = { ...state };
       delete payloadToPush.votes;
 
       const res = await fetch(endpoint, {
-        method: 'PATCH',
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payloadToPush)
       });
@@ -440,22 +465,19 @@
     }
   }
 
-  async function submitPlayerVoteToCloud(voterKey, voteObj) {
+  async function submitPlayerVoteToCloud(voterKey, voteObj, explicitRoomCode) {
+    const code = String(explicitRoomCode || state.roomCode || '').trim().toUpperCase();
+    if (!code || code.length < 4) return;
+
     if (!state.votes || typeof state.votes !== 'object') {
       state.votes = {};
     }
     state.votes[voterKey] = voteObj;
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-      saveRoomToLocalRegistry(state);
-    } catch (e) {
-      // Ignorar
-    }
 
     const dbUrl = getFirebaseDbUrl();
-    const code = (state.roomCode || 'DEFAULT').toUpperCase();
     if (!dbUrl) return;
-    const voteEndpoint = `${dbUrl}/torneos/${code}/votes/${encodeURIComponent(voterKey)}.json`;
+    // Guardar en nodo independiente /votos_torneos/{code}/{voterKey} para NUNCA disparar eventos sobre /torneos/{code}
+    const voteEndpoint = `${dbUrl}/votos_torneos/${code}/${encodeURIComponent(voterKey)}.json`;
     try {
       await fetch(voteEndpoint, {
         method: 'PUT',
@@ -467,10 +489,35 @@
     }
   }
 
+  async function pullVotesFromCloud(explicitRoomCode) {
+    const code = String(explicitRoomCode || state.roomCode || '').trim().toUpperCase();
+    const votesEndpoint = getRoomVotesEndpoint(code);
+    if (!votesEndpoint || !code) return;
+
+    try {
+      const res = await fetch(votesEndpoint);
+      if (!res.ok) return;
+      const remoteVotes = await res.json();
+      if (code !== state.roomCode) return;
+
+      const cleanVotes =
+        remoteVotes && typeof remoteVotes === 'object' && !Array.isArray(remoteVotes) ? remoteVotes : {};
+      const mergedVotes = { ...(state.votes || {}), ...cleanVotes };
+
+      if (JSON.stringify(state.votes || {}) !== JSON.stringify(mergedVotes)) {
+        state.votes = mergedVotes;
+        renderSpecialAwardsCards();
+      }
+    } catch (e) {
+      // Ignorar errores de lectura de votos
+    }
+  }
+
   async function pullStateFromCloud() {
-    const endpoint = getRoomCloudEndpoint(state.roomCode);
+    const currentCode = state.roomCode;
+    const endpoint = getRoomCloudEndpoint(currentCode);
     if (!endpoint) {
-      updateLiveSyncBadge(`⚪ ${state.roomCode}`, false);
+      updateLiveSyncBadge(`⚪ ${currentCode}`, false);
       return false;
     }
 
@@ -478,21 +525,31 @@
       const res = await fetch(endpoint);
       if (!res.ok) return false;
       const remoteData = await res.json();
-      if (isValidTournamentPayload(remoteData)) {
-        const currentCode = state.roomCode;
+
+      // Sincronizar votos desde el nodo independiente /votos_torneos/{code}
+      await pullVotesFromCloud(currentCode);
+
+      if (isValidTournamentPayload(remoteData) && String(remoteData.roomCode).toUpperCase() === currentCode) {
+        const preservedVotes = { ...(state.votes || {}), ...(remoteData.votes || {}) };
         const cleanRemote = normalizeState(remoteData, currentCode);
         cleanRemote.roomCode = currentCode;
-        cleanRemote.votes = { ...(state.votes || {}), ...(cleanRemote.votes || {}) };
+        cleanRemote.votes = preservedVotes;
 
         const localTime = Number(state.updatedAt || 0);
         const remoteTime = Number(cleanRemote.updatedAt || 0);
-        const prevVotesJson = JSON.stringify(state.votes || {});
-        const nextVotesJson = JSON.stringify(cleanRemote.votes || {});
-        const votesChanged = prevVotesJson !== nextVotesJson;
+
+        const localHasData =
+          (Array.isArray(state.players) && state.players.length > 0) ||
+          (Array.isArray(state.rounds) && state.rounds.some((r) => r.matches && r.matches.length > 0));
+        const remoteHasData =
+          (Array.isArray(cleanRemote.players) && cleanRemote.players.length > 0) ||
+          (Array.isArray(cleanRemote.rounds) && cleanRemote.rounds.some((r) => r.matches && r.matches.length > 0));
+
+        // Nunca permitir que un estado remoto vacío sobrescriba un torneo con jugadores/partidas salvo formateo explícito
+        const canAcceptRemote = !localHasData || remoteHasData || !!remoteData.explicitReset;
 
         if (!isAdminMode) {
-          // Modo Jugador: actualizar solo si hubo cambios reales en el torneo o en los votos
-          if (remoteTime !== localTime || votesChanged) {
+          if (remoteTime !== localTime && canAcceptRemote) {
             isApplyingRemoteUpdate = true;
             state = cleanRemote;
             localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -501,26 +558,13 @@
             isApplyingRemoteUpdate = false;
           }
         } else {
-          // Modo Organizador: proteger contra estados remotos vacíos y sincronizar si la nube es más reciente
-          const localHasData =
-            (Array.isArray(state.players) && state.players.length > 0) ||
-            (Array.isArray(state.rounds) && state.rounds.some((r) => r.matches && r.matches.length > 0));
-          const remoteHasData =
-            (Array.isArray(cleanRemote.players) && cleanRemote.players.length > 0) ||
-            (Array.isArray(cleanRemote.rounds) && cleanRemote.rounds.some((r) => r.matches && r.matches.length > 0));
-
-          if (remoteTime > localTime && (!localHasData || remoteHasData)) {
+          if (remoteTime > localTime && canAcceptRemote) {
             isApplyingRemoteUpdate = true;
             state = cleanRemote;
             localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
             saveRoomToLocalRegistry(state);
             renderAll();
             isApplyingRemoteUpdate = false;
-          } else if (votesChanged) {
-            state.votes = cleanRemote.votes;
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-            saveRoomToLocalRegistry(state);
-            renderPodiumView();
           }
         }
         updateLiveSyncBadge(`🟢 ${state.roomCode}`, true);
@@ -559,6 +603,7 @@
             state = normalizeState(remoteData, code);
             state.roomCode = code;
             isAdminMode = isRoomOwnedByMe(code);
+            syncUrlWithRoomCode(code);
             localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
             saveRoomToLocalRegistry(state);
             applyRoleModeUI();
@@ -585,6 +630,7 @@
       state = normalizeState(localRoom, code);
       state.roomCode = code;
       isAdminMode = isRoomOwnedByMe(code);
+      syncUrlWithRoomCode(code);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
       applyRoleModeUI();
       switchTab(isAdminMode ? 'setup' : 'rounds');
@@ -608,64 +654,53 @@
       const path = payload.path || '/';
       const data = payload.data;
 
-      // 1. Si el evento corresponde a un voto en /votes o /votes/{jugador}, actualizar SOLO los votos
-      if (path === '/votes' || path.startsWith('/votes/')) {
-        if (!state.votes || typeof state.votes !== 'object') {
-          state.votes = {};
-        }
-        if (path === '/votes' && data && typeof data === 'object') {
-          state.votes = { ...state.votes, ...data };
-        } else if (path.startsWith('/votes/') && data && typeof data === 'object') {
-          const voterKey = decodeURIComponent(path.slice('/votes/'.length).replace(/\/+$/, ''));
-          if (voterKey) {
-            state.votes[voterKey] = data;
-          }
-        }
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-        saveRoomToLocalRegistry(state);
-        renderPodiumView();
-        updateLiveSyncBadge(`🟢 ${state.roomCode}`, true);
+      // Ignorar cualquier evento parcial; solo procesar raíz '/' con payload de torneo válido para la sala actual
+      if (path !== '/' || !isValidTournamentPayload(data)) {
         return;
       }
 
-      // 2. Si el evento es de la raíz '/', validar que sea un objeto de torneo completo
-      if (path === '/' && isValidTournamentPayload(data)) {
-        const currentCode = state.roomCode;
-        const cleanRemote = normalizeState(data, currentCode);
-        cleanRemote.roomCode = currentCode;
-        cleanRemote.votes = { ...(state.votes || {}), ...(cleanRemote.votes || {}) };
-
-        const remoteTime = Number(cleanRemote.updatedAt || 0);
-        const localTime = Number(state.updatedAt || 0);
-
-        if (!isAdminMode) {
-          if (remoteTime !== localTime) {
-            isApplyingRemoteUpdate = true;
-            state = cleanRemote;
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-            saveRoomToLocalRegistry(state);
-            renderAll();
-            isApplyingRemoteUpdate = false;
-          }
-        } else {
-          const localHasData =
-            (Array.isArray(state.players) && state.players.length > 0) ||
-            (Array.isArray(state.rounds) && state.rounds.some((r) => r.matches && r.matches.length > 0));
-          const remoteHasData =
-            (Array.isArray(cleanRemote.players) && cleanRemote.players.length > 0) ||
-            (Array.isArray(cleanRemote.rounds) && cleanRemote.rounds.some((r) => r.matches && r.matches.length > 0));
-
-          if (remoteTime > localTime && (!localHasData || remoteHasData)) {
-            isApplyingRemoteUpdate = true;
-            state = cleanRemote;
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-            saveRoomToLocalRegistry(state);
-            renderAll();
-            isApplyingRemoteUpdate = false;
-          }
-        }
-        updateLiveSyncBadge(`🟢 ${state.roomCode}`, true);
+      const currentCode = state.roomCode;
+      if (String(data.roomCode || '').toUpperCase() !== currentCode) {
+        return;
       }
+
+      const preservedVotes = { ...(state.votes || {}), ...(data.votes || {}) };
+      const cleanRemote = normalizeState(data, currentCode);
+      cleanRemote.roomCode = currentCode;
+      cleanRemote.votes = preservedVotes;
+
+      const remoteTime = Number(cleanRemote.updatedAt || 0);
+      const localTime = Number(state.updatedAt || 0);
+
+      const localHasData =
+        (Array.isArray(state.players) && state.players.length > 0) ||
+        (Array.isArray(state.rounds) && state.rounds.some((r) => r.matches && r.matches.length > 0));
+      const remoteHasData =
+        (Array.isArray(cleanRemote.players) && cleanRemote.players.length > 0) ||
+        (Array.isArray(cleanRemote.rounds) && cleanRemote.rounds.some((r) => r.matches && r.matches.length > 0));
+
+      const canAcceptRemote = !localHasData || remoteHasData || !!data.explicitReset;
+
+      if (!isAdminMode) {
+        if (remoteTime !== localTime && canAcceptRemote) {
+          isApplyingRemoteUpdate = true;
+          state = cleanRemote;
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+          saveRoomToLocalRegistry(state);
+          renderAll();
+          isApplyingRemoteUpdate = false;
+        }
+      } else {
+        if (remoteTime > localTime && canAcceptRemote) {
+          isApplyingRemoteUpdate = true;
+          state = cleanRemote;
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+          saveRoomToLocalRegistry(state);
+          renderAll();
+          isApplyingRemoteUpdate = false;
+        }
+      }
+      updateLiveSyncBadge(`🟢 ${state.roomCode}`, true);
     } catch (e) {
       // Ignorar errores de parseo SSE
     }
@@ -676,12 +711,17 @@
       cloudEventSource.close();
       cloudEventSource = null;
     }
+    if (votesEventSource) {
+      votesEventSource.close();
+      votesEventSource = null;
+    }
     if (cloudPollTimer) {
       clearInterval(cloudPollTimer);
       cloudPollTimer = null;
     }
 
     const endpoint = getRoomCloudEndpoint(state.roomCode);
+    const votesEndpoint = getRoomVotesEndpoint(state.roomCode);
     if (!endpoint) {
       updateLiveSyncBadge(`⚪ ${state.roomCode}`, false);
       return;
@@ -692,10 +732,21 @@
     try {
       const sse = new EventSource(endpoint);
       sse.addEventListener('put', handleSseEvent);
-      sse.addEventListener('patch', handleSseEvent);
       cloudEventSource = sse;
     } catch (e) {
       console.warn('SSE no disponible, usando polling:', e);
+    }
+
+    if (votesEndpoint) {
+      try {
+        const vSse = new EventSource(votesEndpoint);
+        vSse.addEventListener('put', () => {
+          pullVotesFromCloud(state.roomCode);
+        });
+        votesEventSource = vSse;
+      } catch (e) {
+        // Ignorar
+      }
     }
 
     cloudPollTimer = setInterval(pullStateFromCloud, 5000);
@@ -2112,18 +2163,8 @@
     }
   }
 
-  function renderPodiumView() {
-    const standings = calculateStandings();
-    document.getElementById('thPlayerOrTeam').textContent =
-      state.mode === 'teams' ? 'EQUIPO' : 'JUGADOR';
-
-    const finishedBanner = document.getElementById('tournamentFinishedBanner');
-    if (finishedBanner) {
-      finishedBanner.classList.toggle('hidden', !state.tournamentFinished);
-    }
-
-    updateVotingControlUI();
-
+  function renderSpecialAwardsCards(optionalStandings) {
+    const standings = optionalStandings || calculateStandings();
     const awards = calculateSpecialAwards(standings);
     const awardsShowcaseEl = document.getElementById('specialAwardsShowcase');
     if (awardsShowcaseEl) {
@@ -2165,6 +2206,20 @@
         </div>
       `;
     }
+  }
+
+  function renderPodiumView() {
+    const standings = calculateStandings();
+    document.getElementById('thPlayerOrTeam').textContent =
+      state.mode === 'teams' ? 'EQUIPO' : 'JUGADOR';
+
+    const finishedBanner = document.getElementById('tournamentFinishedBanner');
+    if (finishedBanner) {
+      finishedBanner.classList.toggle('hidden', !state.tournamentFinished);
+    }
+
+    updateVotingControlUI();
+    renderSpecialAwardsCards(standings);
 
     const activePlayers = standings.filter((s) => !s.abandoned);
     const first = standings[0];
@@ -2443,10 +2498,17 @@
             finished: false,
             podiumUpdated: false,
             teamClashes: [],
-            matches: []
+            matches: [],
+            timer: {
+              durationMinutes: 90,
+              remainingMs: 90 * 60 * 1000,
+              endTime: null,
+              running: false
+            }
           });
         }
         state.activeRound = 1;
+        state.tournamentFinished = false;
         saveState();
         switchTab('rounds');
         showToast(`Torneo inicializado con ${state.totalRounds} rondas. ¡Listo para emparejar Ronda 1!`);
@@ -2480,11 +2542,22 @@
               finished: false,
               podiumUpdated: false,
               teamClashes: [],
-              matches: []
+              matches: [],
+              timer: {
+                durationMinutes: 90,
+                remainingMs: 90 * 60 * 1000,
+                endTime: null,
+                running: false
+              }
             });
           }
           state.activeRound = 1;
+          state.tournamentFinished = false;
+          state.votingPaintOpen = false;
+          state.votingFairPlayOpen = false;
+          state.explicitReset = true;
           saveState();
+          delete state.explicitReset;
           renderAll();
           showToast('Plantilla formateada en blanco para un nuevo torneo.');
         }
@@ -2992,9 +3065,15 @@
     window.addEventListener('storage', (e) => {
       if (e.key === ROOMS_REGISTRY_KEY && state && state.roomCode) {
         const updatedRoom = getRoomFromLocalRegistry(state.roomCode);
-        if (updatedRoom && updatedRoom.updatedAt > (state.updatedAt || 0)) {
-          state = updatedRoom;
-          ensureConsistency();
+        if (
+          updatedRoom &&
+          isValidTournamentPayload(updatedRoom) &&
+          String(updatedRoom.roomCode).toUpperCase() === state.roomCode &&
+          updatedRoom.updatedAt > (state.updatedAt || 0)
+        ) {
+          const currentVotes = { ...(state.votes || {}), ...(updatedRoom.votes || {}) };
+          state = normalizeState(updatedRoom, state.roomCode);
+          state.votes = currentVotes;
           renderAll();
         }
       }
@@ -3002,6 +3081,7 @@
   }
 
   function openSpecialVotingModal() {
+    const lockedRoomCode = String(state.roomCode || '').trim().toUpperCase();
     const paintOpen = !!state.votingPaintOpen;
     const fairOpen = !!state.votingFairPlayOpen;
 
@@ -3019,7 +3099,7 @@
 
     let savedVoterKey = '';
     try {
-      savedVoterKey = localStorage.getItem(`${VOTER_IDENTITY_KEY}_${state.roomCode}`) || '';
+      savedVoterKey = localStorage.getItem(`${VOTER_IDENTITY_KEY}_${lockedRoomCode}`) || '';
     } catch (e) {
       // Ignorar
     }
@@ -3154,20 +3234,24 @@
       }
 
       try {
-        localStorage.setItem(`${VOTER_IDENTITY_KEY}_${state.roomCode}`, voterKey);
+        localStorage.setItem(`${VOTER_IDENTITY_KEY}_${lockedRoomCode}`, voterKey);
       } catch (e) {
         // Ignorar
       }
 
-      await submitPlayerVoteToCloud(voterKey, {
-        voter: voterName,
-        paintVote,
-        fairPlayVote,
-        updatedAt: Date.now()
-      });
+      await submitPlayerVoteToCloud(
+        voterKey,
+        {
+          voter: voterName,
+          paintVote,
+          fairPlayVote,
+          updatedAt: Date.now()
+        },
+        lockedRoomCode
+      );
 
       closeModal();
-      renderPodiumView();
+      renderSpecialAwardsCards();
       showToast(`✅ ¡Voto de ${voterName} registrado con éxito!`);
     });
   }
@@ -3212,11 +3296,7 @@
         ensureConsistency();
         markRoomAsOwned(newCode);
         isAdminMode = true;
-        try {
-          window.history.replaceState({}, '', window.location.pathname);
-        } catch (e) {
-          // Ignorar
-        }
+        syncUrlWithRoomCode(newCode);
         saveState();
         startCloudRealtimeSync();
         applyRoleModeUI();
