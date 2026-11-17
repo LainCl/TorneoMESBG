@@ -404,14 +404,22 @@
   // 1B. SINCRONIZACIÓN EN TIEMPO REAL POR CÓDIGO DE SALA (COMPANION + FIREBASE)
   // =========================================================================
 
+  const DEFAULT_FIREBASE_DB_URL = 'https://torneomesbg-default-rtdb.firebaseio.com';
+  let isPushingToCloud = false;
+  let pendingPushRequested = false;
+  let sseReconnectTimer = null;
+
   function getFirebaseDbUrl() {
     const fromConfig =
       window.MESBG_CLOUD_CONFIG && window.MESBG_CLOUD_CONFIG.FIREBASE_DB_URL
         ? window.MESBG_CLOUD_CONFIG.FIREBASE_DB_URL.trim()
         : '';
-    const fromLocal = localStorage.getItem(FIREBASE_URL_STORAGE_KEY) || '';
-    const url = (fromConfig || fromLocal).replace(/\/+$/, '');
-    return url;
+    const fromLocal = (localStorage.getItem(FIREBASE_URL_STORAGE_KEY) || '').trim();
+    const candidate = (fromConfig || fromLocal || DEFAULT_FIREBASE_DB_URL).replace(/\/+$/, '');
+    if (candidate.startsWith('https://') && (candidate.includes('firebaseio.com') || candidate.includes('firebasedatabase.app'))) {
+      return candidate;
+    }
+    return DEFAULT_FIREBASE_DB_URL;
   }
 
   function getRoomCloudEndpoint(roomCode) {
@@ -439,29 +447,74 @@
     badge.classList.toggle('online', !!isOnline);
   }
 
+  async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, {
+        ...options,
+        cache: 'no-store',
+        signal: controller.signal
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  function hasTournamentMeaningfulData(tState) {
+    if (!tState || typeof tState !== 'object') return false;
+    if (Array.isArray(tState.players) && tState.players.length > 0) return true;
+    if (tState.mode === 'teams' && Array.isArray(tState.teams) && tState.teams.length > 0) return true;
+    if (
+      Array.isArray(tState.rounds) &&
+      tState.rounds.some(
+        (r) =>
+          (Array.isArray(r.matches) && r.matches.length > 0) ||
+          (Array.isArray(r.teamClashes) && r.teamClashes.length > 0)
+      )
+    ) {
+      return true;
+    }
+    return false;
+  }
+
   async function pushStateToCloud() {
     const endpoint = getRoomCloudEndpoint(state.roomCode);
     if (!endpoint) return;
 
-    try {
-      updateLiveSyncBadge(`🔄 ${state.roomCode}`, true);
-      // Guardar el estado del torneo en /torneos/{code} sin tocar /votos_torneos/{code}
-      const payloadToPush = { ...state };
-      delete payloadToPush.votes;
+    if (isPushingToCloud) {
+      pendingPushRequested = true;
+      return;
+    }
 
-      const res = await fetch(endpoint, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payloadToPush)
-      });
-      if (res.ok) {
-        updateLiveSyncBadge(`🟢 ${state.roomCode}`, true);
-      } else {
-        updateLiveSyncBadge('⚠️ ERROR NUBE', false);
-      }
+    isPushingToCloud = true;
+    try {
+      do {
+        pendingPushRequested = false;
+        const currentEndpoint = getRoomCloudEndpoint(state.roomCode);
+        if (!currentEndpoint) break;
+
+        updateLiveSyncBadge(`🔄 ${state.roomCode}`, true);
+        // Guardar el estado del torneo en /torneos/{code} sin tocar /votos_torneos/{code}
+        const payloadToPush = { ...state };
+        delete payloadToPush.votes;
+
+        const res = await fetchWithTimeout(currentEndpoint, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payloadToPush)
+        });
+        if (res.ok) {
+          updateLiveSyncBadge(`🟢 ${state.roomCode}`, true);
+        } else {
+          updateLiveSyncBadge('⚠️ ERROR NUBE', false);
+        }
+      } while (pendingPushRequested);
     } catch (err) {
       console.warn('Error al sincronizar con Firebase:', err);
       updateLiveSyncBadge('⚠️ SIN CONEXIÓN', false);
+    } finally {
+      isPushingToCloud = false;
     }
   }
 
@@ -479,7 +532,7 @@
     // Guardar en nodo independiente /votos_torneos/{code}/{voterKey} para NUNCA disparar eventos sobre /torneos/{code}
     const voteEndpoint = `${dbUrl}/votos_torneos/${code}/${encodeURIComponent(voterKey)}.json`;
     try {
-      await fetch(voteEndpoint, {
+      await fetchWithTimeout(voteEndpoint, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(voteObj)
@@ -495,7 +548,7 @@
     if (!votesEndpoint || !code) return;
 
     try {
-      const res = await fetch(votesEndpoint);
+      const res = await fetchWithTimeout(votesEndpoint);
       if (!res.ok) return;
       const remoteVotes = await res.json();
       if (code !== state.roomCode) return;
@@ -514,6 +567,8 @@
   }
 
   async function pullStateFromCloud() {
+    if (isPushingToCloud) return false;
+
     const currentCode = state.roomCode;
     const endpoint = getRoomCloudEndpoint(currentCode);
     if (!endpoint) {
@@ -522,9 +577,13 @@
     }
 
     try {
-      const res = await fetch(endpoint);
-      if (!res.ok) return false;
+      const res = await fetchWithTimeout(endpoint);
+      if (!res.ok) {
+        updateLiveSyncBadge('⚠️ ERROR NUBE', false);
+        return false;
+      }
       const remoteData = await res.json();
+      if (isPushingToCloud || state.roomCode !== currentCode) return false;
 
       // Sincronizar votos desde el nodo independiente /votos_torneos/{code}
       await pullVotesFromCloud(currentCode);
@@ -538,12 +597,8 @@
         const localTime = Number(state.updatedAt || 0);
         const remoteTime = Number(cleanRemote.updatedAt || 0);
 
-        const localHasData =
-          (Array.isArray(state.players) && state.players.length > 0) ||
-          (Array.isArray(state.rounds) && state.rounds.some((r) => r.matches && r.matches.length > 0));
-        const remoteHasData =
-          (Array.isArray(cleanRemote.players) && cleanRemote.players.length > 0) ||
-          (Array.isArray(cleanRemote.rounds) && cleanRemote.rounds.some((r) => r.matches && r.matches.length > 0));
+        const localHasData = hasTournamentMeaningfulData(state);
+        const remoteHasData = hasTournamentMeaningfulData(cleanRemote);
 
         // Nunca permitir que un estado remoto vacío sobrescriba un torneo con jugadores/partidas salvo formateo explícito
         const canAcceptRemote = !localHasData || remoteHasData || !!remoteData.explicitReset;
@@ -595,7 +650,7 @@
     if (endpoint) {
       showToast(`🔍 Buscando torneo "${code}" en vivo...`);
       try {
-        const res = await fetch(endpoint);
+        const res = await fetchWithTimeout(endpoint);
         if (res.ok) {
           const remoteData = await res.json();
           if (isValidTournamentPayload(remoteData)) {
@@ -604,6 +659,7 @@
             state.roomCode = code;
             isAdminMode = isRoomOwnedByMe(code);
             syncUrlWithRoomCode(code);
+            await pullVotesFromCloud(code);
             localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
             saveRoomToLocalRegistry(state);
             applyRoleModeUI();
@@ -648,6 +704,7 @@
   }
 
   function handleSseEvent(ev) {
+    if (isPushingToCloud) return;
     try {
       const payload = JSON.parse(ev.data);
       if (!payload || typeof payload !== 'object') return;
@@ -672,12 +729,8 @@
       const remoteTime = Number(cleanRemote.updatedAt || 0);
       const localTime = Number(state.updatedAt || 0);
 
-      const localHasData =
-        (Array.isArray(state.players) && state.players.length > 0) ||
-        (Array.isArray(state.rounds) && state.rounds.some((r) => r.matches && r.matches.length > 0));
-      const remoteHasData =
-        (Array.isArray(cleanRemote.players) && cleanRemote.players.length > 0) ||
-        (Array.isArray(cleanRemote.rounds) && cleanRemote.rounds.some((r) => r.matches && r.matches.length > 0));
+      const localHasData = hasTournamentMeaningfulData(state);
+      const remoteHasData = hasTournamentMeaningfulData(cleanRemote);
 
       const canAcceptRemote = !localHasData || remoteHasData || !!data.explicitReset;
 
@@ -719,6 +772,10 @@
       clearInterval(cloudPollTimer);
       cloudPollTimer = null;
     }
+    if (sseReconnectTimer) {
+      clearTimeout(sseReconnectTimer);
+      sseReconnectTimer = null;
+    }
 
     const endpoint = getRoomCloudEndpoint(state.roomCode);
     const votesEndpoint = getRoomVotesEndpoint(state.roomCode);
@@ -732,6 +789,13 @@
     try {
       const sse = new EventSource(endpoint);
       sse.addEventListener('put', handleSseEvent);
+      sse.addEventListener('patch', handleSseEvent);
+      sse.onerror = () => {
+        if (sseReconnectTimer) clearTimeout(sseReconnectTimer);
+        sseReconnectTimer = setTimeout(() => {
+          pullStateFromCloud();
+        }, 3000);
+      };
       cloudEventSource = sse;
     } catch (e) {
       console.warn('SSE no disponible, usando polling:', e);
@@ -740,9 +804,9 @@
     if (votesEndpoint) {
       try {
         const vSse = new EventSource(votesEndpoint);
-        vSse.addEventListener('put', () => {
-          pullVotesFromCloud(state.roomCode);
-        });
+        const onVoteEvent = () => pullVotesFromCloud(state.roomCode);
+        vSse.addEventListener('put', onVoteEvent);
+        vSse.addEventListener('patch', onVoteEvent);
         votesEventSource = vSse;
       } catch (e) {
         // Ignorar
@@ -3076,6 +3140,16 @@
           state.votes = currentVotes;
           renderAll();
         }
+      }
+    });
+
+    // Reconexión inmediata cuando el dispositivo recupera conexión o vuelve a primer plano (celular/pestaña)
+    window.addEventListener('online', () => {
+      startCloudRealtimeSync();
+    });
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        pullStateFromCloud();
       }
     });
   }
