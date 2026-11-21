@@ -119,6 +119,43 @@
     updatePlayerIdentityPillUI();
   }
 
+  let lastNotifiedSeatingKey = '';
+
+  function isPlayerInEntity(entityName, playerName) {
+    const eLower = String(entityName || '').trim().toLowerCase();
+    const pLower = String(playerName || '').trim().toLowerCase();
+    if (!eLower || !pLower || eLower === 'bye') return false;
+    if (eLower === pLower) return true;
+    const parts = eLower
+      .replace(/[()]/g, ' ')
+      .split(/\s*[&+/]\s*|\s+y\s+/i)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    return parts.includes(pLower);
+  }
+
+  function isPlayerInMatch(match, playerName) {
+    if (!match || !playerName) return false;
+    return isPlayerInEntity(match.p1?.name, playerName) || isPlayerInEntity(match.p2?.name, playerName);
+  }
+
+  function isEntityDropped(entityName) {
+    if (!entityName || entityName === 'BYE') return false;
+    const clean = String(entityName).trim();
+    if (state.droppedPlayers && state.droppedPlayers[clean]) return true;
+    const regKey = sanitizeFirebaseKey(clean);
+    if (state.registrations && state.registrations[regKey] && state.registrations[regKey].dropped) {
+      return true;
+    }
+    if (state.mode === 'pairs' && state.registrations && typeof state.registrations === 'object') {
+      const anyPartDropped = Object.values(state.registrations).some(
+        (r) => r && r.dropped && r.name && isPlayerInEntity(clean, r.name)
+      );
+      if (anyPartDropped) return true;
+    }
+    return false;
+  }
+
   function getEntityArmy(entityName) {
     if (!entityName || entityName === 'BYE') return '';
     if (state.playerArmies && state.playerArmies[entityName]) {
@@ -268,6 +305,7 @@
     s.votingFairPlayOpen = !!s.votingFairPlayOpen;
     s.votes = s.votes && typeof s.votes === 'object' ? s.votes : {};
     s.playerArmies = s.playerArmies && typeof s.playerArmies === 'object' ? s.playerArmies : {};
+    s.droppedPlayers = s.droppedPlayers && typeof s.droppedPlayers === 'object' ? s.droppedPlayers : {};
     s.registrations = s.registrations && typeof s.registrations === 'object' ? s.registrations : {};
     s.removedRegistrationKeys = Array.isArray(s.removedRegistrationKeys) ? s.removedRegistrationKeys : [];
     s.players = Array.isArray(s.players) ? s.players : [];
@@ -399,6 +437,7 @@
       votingFairPlayOpen: false,
       votes: {},
       playerArmies: {},
+      droppedPlayers: {},
       registrations: {},
       removedRegistrationKeys: [],
       players: [],
@@ -747,7 +786,13 @@
       name: cleanName,
       army: cleanArmy,
       deviceId: existingReg && existingReg.deviceId ? existingReg.deviceId : myDevId,
-      joinedAt: existingReg && existingReg.joinedAt ? existingReg.joinedAt : Date.now()
+      joinedAt: existingReg && existingReg.joinedAt ? existingReg.joinedAt : Date.now(),
+      dropped: !!(existingReg && existingReg.dropped),
+      droppedAtRound: existingReg && existingReg.droppedAtRound ? existingReg.droppedAtRound : null,
+      matchReports:
+        existingReg && existingReg.matchReports && typeof existingReg.matchReports === 'object'
+          ? existingReg.matchReports
+          : {}
     };
 
     if (!state.registrations || typeof state.registrations !== 'object') {
@@ -801,6 +846,151 @@
     }
   }
 
+  async function submitPlayerDropStatusToCloud(playerName, isDropped, explicitRoomCode) {
+    if (state && state.tournamentFinished) return false;
+    const code = String(explicitRoomCode || state.roomCode || '').trim().toUpperCase();
+    const cleanName = sanitizeTextField(playerName, 40);
+    if (!code || !cleanName) return false;
+
+    const regKey = sanitizeFirebaseKey(cleanName);
+    if (!regKey) return false;
+
+    if (!state.registrations || typeof state.registrations !== 'object') {
+      state.registrations = {};
+    }
+    if (!state.droppedPlayers || typeof state.droppedPlayers !== 'object') {
+      state.droppedPlayers = {};
+    }
+
+    const existingReg = state.registrations[regKey] || {};
+    const regObj = {
+      name: cleanName,
+      army: existingReg.army || getEntityArmy(cleanName) || '',
+      deviceId: existingReg.deviceId || getMyDeviceId(),
+      joinedAt: Number(existingReg.joinedAt) || Date.now(),
+      dropped: !!isDropped,
+      droppedAtRound: isDropped ? state.activeRound : null,
+      droppedAt: Date.now(),
+      matchReports:
+        existingReg.matchReports && typeof existingReg.matchReports === 'object'
+          ? existingReg.matchReports
+          : {}
+    };
+
+    state.registrations[regKey] = regObj;
+    state.droppedPlayers[cleanName] = !!isDropped;
+
+    const dbUrl = getFirebaseDbUrl();
+    if (!dbUrl) return true;
+    const regEndpoint = `${dbUrl}/inscripciones_torneos/${code}/${encodeURIComponent(regKey)}.json`;
+    try {
+      const res = await fetchWithRetry(regEndpoint, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(regObj)
+      });
+      if (!res.ok) return false;
+      if (isAdminMode) {
+        saveState();
+      }
+      return true;
+    } catch (err) {
+      console.warn('Error al actualizar estado Drop en Firebase:', err);
+      return false;
+    }
+  }
+
+  async function submitPlayerMatchReportToCloud(roundNum, matchIdx, p1Vp, p2Vp, p1Surrender, p2Surrender) {
+    if (state && state.tournamentFinished) return false;
+    const code = String(state.roomCode || '').trim().toUpperCase();
+    const rObj = (state.rounds || []).find((r) => Number(r.round) === Number(roundNum));
+    if (!rObj || rObj.finished || !rObj.matches || !rObj.matches[matchIdx]) return false;
+
+    const match = rObj.matches[matchIdx];
+    const myId = getMyPlayerIdentity(code);
+    const reporterName = sanitizeTextField(myId.name || (isAdminMode ? 'Organizador' : ''), 40);
+    if (!reporterName) return false;
+    if (!isAdminMode && !isPlayerInMatch(match, reporterName)) return false;
+
+    const now = Date.now();
+    const cleanP1Vp = Math.max(0, Math.min(100, Number(p1Vp) || 0));
+    const cleanP2Vp = Math.max(0, Math.min(100, Number(p2Vp) || 0));
+
+    match.p1.vp = cleanP1Vp;
+    match.p2.vp = cleanP2Vp;
+    match.p1.surrender = !!p1Surrender;
+    match.p2.surrender = !!p2Surrender;
+    match.p1.manualTp = false;
+    match.p2.manualTp = false;
+    recalculateMatch(match, match.p1.surrender || match.p2.surrender ? 'forfeit' : 'vp');
+    match.reportedBy = reporterName;
+    match.lastAppliedReportAt = now;
+
+    if (isAdminMode) {
+      saveState();
+      return true;
+    }
+
+    const regKey = sanitizeFirebaseKey(reporterName);
+    if (!state.registrations || typeof state.registrations !== 'object') {
+      state.registrations = {};
+    }
+    const existingReg = state.registrations[regKey] || {};
+    const matchReports =
+      existingReg.matchReports && typeof existingReg.matchReports === 'object'
+        ? { ...existingReg.matchReports }
+        : {};
+
+    const reportKey = `R${roundNum}_M${matchIdx}`;
+    matchReports[reportKey] = {
+      round: Number(roundNum),
+      matchIdx: Number(matchIdx),
+      table: String(match.table || ''),
+      p1Name: String(match.p1.name || ''),
+      p2Name: String(match.p2.name || ''),
+      p1Vp: cleanP1Vp,
+      p2Vp: cleanP2Vp,
+      p1Surrender: !!p1Surrender,
+      p2Surrender: !!p2Surrender,
+      reportedBy: reporterName,
+      reportedAt: now
+    };
+
+    const regObj = {
+      name: reporterName,
+      army: existingReg.army || myId.army || getEntityArmy(reporterName) || '',
+      deviceId: existingReg.deviceId || getMyDeviceId(),
+      joinedAt: Number(existingReg.joinedAt) || now,
+      dropped: !!existingReg.dropped,
+      droppedAtRound: existingReg.droppedAtRound || null,
+      matchReports
+    };
+
+    state.registrations[regKey] = regObj;
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      saveRoomToLocalRegistry(state);
+    } catch (e) {
+      // Ignorar
+    }
+
+    const dbUrl = getFirebaseDbUrl();
+    if (!dbUrl) return true;
+    const regEndpoint = `${dbUrl}/inscripciones_torneos/${code}/${encodeURIComponent(regKey)}.json`;
+    try {
+      const res = await fetchWithRetry(regEndpoint, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(regObj)
+      });
+      return res.ok;
+    } catch (err) {
+      console.warn('Error al enviar reporte de mesa a Firebase:', err);
+      updateLiveSyncBadge('⚠️ SIN CONEXIÓN', false);
+      return false;
+    }
+  }
+
   async function deletePlayerRegistrationFromCloud(playerName, explicitRoomCode) {
     const code = String(explicitRoomCode || state.roomCode || '').trim().toUpperCase();
     const cleanName = sanitizeTextField(playerName, 40);
@@ -846,9 +1036,13 @@
       if (!state.playerArmies || typeof state.playerArmies !== 'object') {
         state.playerArmies = {};
       }
+      if (!state.droppedPlayers || typeof state.droppedPlayers !== 'object') {
+        state.droppedPlayers = {};
+      }
 
       const prevRegsJson = JSON.stringify(state.registrations || {});
       const nextRegistrations = {};
+      const allIncomingReports = [];
 
       Object.entries(cleanRegs).forEach(([key, item]) => {
         if (!item || typeof item !== 'object' || removedSet.has(key) || RESERVED_PROTO_KEYS.has(key)) return;
@@ -859,16 +1053,37 @@
         // Si las inscripciones están cerradas, no aceptar altas nuevas externas que no estuvieran ya en la sala
         const wasAlreadyKnown =
           (state.registrations && state.registrations[key]) ||
-          (state.players || []).some((p) => String(p).toLowerCase() === pName.toLowerCase());
+          (state.players || []).some((p) => isPlayerInEntity(p, pName));
         if (state.registrationOpen === false && !wasAlreadyKnown) {
           return;
         }
+
+        const isDropped = !!item.dropped;
+        const prevDropped = !!state.droppedPlayers[pName];
+        if (prevDropped !== isDropped) {
+          state.droppedPlayers[pName] = isDropped;
+          rosterChanged = true;
+        }
+
+        const itemReports =
+          item.matchReports && typeof item.matchReports === 'object' && !Array.isArray(item.matchReports)
+            ? item.matchReports
+            : {};
+
+        Object.values(itemReports).forEach((rep) => {
+          if (rep && typeof rep === 'object' && Number(rep.reportedAt) > 0) {
+            allIncomingReports.push({ ...rep, reporterVerifiedName: pName });
+          }
+        });
 
         nextRegistrations[key] = {
           name: pName,
           army: pArmy,
           deviceId: item.deviceId ? String(item.deviceId).slice(0, 64) : '',
-          joinedAt: Number(item.joinedAt) || Date.now()
+          joinedAt: Number(item.joinedAt) || Date.now(),
+          dropped: isDropped,
+          droppedAtRound: item.droppedAtRound || null,
+          matchReports: itemReports
         };
         if (pArmy) {
           state.playerArmies[pName] = pArmy;
@@ -885,6 +1100,45 @@
           rosterChanged = true;
         }
       });
+
+      // Aplicar reportes de resultados enviados por los jugadores desde sus mesas (ordenados cronológicamente)
+      if (!state.tournamentFinished && allIncomingReports.length > 0) {
+        allIncomingReports.sort((a, b) => Number(a.reportedAt) - Number(b.reportedAt));
+        allIncomingReports.forEach((rep) => {
+          const rObj = (state.rounds || []).find((r) => Number(r.round) === Number(rep.round));
+          if (!rObj || rObj.finished || !Array.isArray(rObj.matches)) return;
+
+          const targetMatch = rObj.matches.find(
+            (m, idx) =>
+              (rep.p1Name &&
+                rep.p2Name &&
+                String(m.p1?.name).toLowerCase() === String(rep.p1Name).toLowerCase() &&
+                String(m.p2?.name).toLowerCase() === String(rep.p2Name).toLowerCase()) ||
+              (typeof rep.matchIdx === 'number' && idx === rep.matchIdx && String(m.table) === String(rep.table))
+          );
+
+          if (!targetMatch) return;
+          if (!isPlayerInMatch(targetMatch, rep.reporterVerifiedName)) return;
+
+          const repTime = Number(rep.reportedAt || 0);
+          const currentMatchTime = Number(targetMatch.lastAppliedReportAt || 0);
+          if (repTime > currentMatchTime) {
+            targetMatch.p1.vp = Math.max(0, Math.min(100, Number(rep.p1Vp) || 0));
+            targetMatch.p2.vp = Math.max(0, Math.min(100, Number(rep.p2Vp) || 0));
+            targetMatch.p1.surrender = !!rep.p1Surrender;
+            targetMatch.p2.surrender = !!rep.p2Surrender;
+            targetMatch.p1.manualTp = false;
+            targetMatch.p2.manualTp = false;
+            recalculateMatch(
+              targetMatch,
+              targetMatch.p1.surrender || targetMatch.p2.surrender ? 'forfeit' : 'vp'
+            );
+            targetMatch.reportedBy = rep.reporterVerifiedName;
+            targetMatch.lastAppliedReportAt = repTime;
+            rosterChanged = true;
+          }
+        });
+      }
 
       state.registrations = nextRegistrations;
       const nextRegsJson = JSON.stringify(state.registrations);
@@ -1538,7 +1792,7 @@
     entities.forEach((name) => {
       statsMap[name] = {
         name,
-        abandoned: false,
+        abandoned: isEntityDropped(name),
         grossTp: 0,
         penalties: 0,
         finalTp: 0,
@@ -1643,10 +1897,10 @@
 
     let activeList = [];
     if (roundNum === 1) {
-      activeList = shuffleArray(getCompetitorEntities());
+      activeList = shuffleArray(getCompetitorEntities().filter((name) => !isEntityDropped(name)));
     } else {
       const prevStandings = calculateStandings(roundNum - 1);
-      activeList = prevStandings.filter((s) => !s.abandoned).map((s) => s.name);
+      activeList = prevStandings.filter((s) => !s.abandoned && !isEntityDropped(s.name)).map((s) => s.name);
     }
 
     if (activeList.length % 2 !== 0) {
@@ -2150,12 +2404,18 @@
         poolChipsEl.innerHTML = regPool
           .map((item) => {
             const assigned = isPlayerAssignedInCurrentMode(item.name);
+            const dropped = isEntityDropped(item.name);
             return `
               <span class="pool-player-chip ${assigned ? 'is-assigned' : ''}" title="${
-              assigned ? 'Ya asignado en el torneo' : 'Disponible para emparejar / asignar'
+              dropped
+                ? 'Jugador retirado (Drop)'
+                : assigned
+                ? 'Ya asignado en el torneo'
+                : 'Disponible para emparejar / asignar'
             }">
                 <strong>${escapeHtml(item.name)}</strong>
                 ${item.army ? `<span class="pool-chip-army">🛡️ ${escapeHtml(item.army)}</span>` : ''}
+                ${dropped ? `<span class="drop-pill-tag">🏳️ DROP</span>` : ''}
                 <button type="button" class="pool-chip-remove" data-remove-pool-player="${escapeHtml(
                   item.name
                 )}" title="Eliminar inscripción de ${escapeHtml(item.name)}">✕</button>
@@ -2435,6 +2695,9 @@
       renderTeamClashesPanel(currentRoundObj);
     }
 
+    // Tarjeta Gigante "Tu Asiento en esta Ronda" (Seatings Alert + Reporte de Resultado + Drop)
+    renderPlayerSeatingHeroCard(currentRoundObj);
+
     // Renderizar tarjetas de mesas
     const container = document.getElementById('roundMatchesContainer');
     container.innerHTML = '';
@@ -2488,6 +2751,12 @@
 
       const err1 = hasDelayError(match.p1);
       const err2 = hasDelayError(match.p2);
+      const canReportThisMatch =
+        (mine || isAdminMode) &&
+        !currentRoundObj.finished &&
+        !state.tournamentFinished &&
+        match.p1.name !== 'BYE' &&
+        match.p2.name !== 'BYE';
 
       card.innerHTML = `
         <div class="match-card-header">
@@ -2500,8 +2769,24 @@
                 : ''
             }
             ${mine ? `<span class="my-match-pill">⚔️ TU MESA</span>` : ''}
+            ${
+              match.reportedBy
+                ? `<span class="match-reported-pill" title="Resultado enviado desde la mesa">📲 Reportado por ${escapeHtml(
+                    match.reportedBy
+                  )}</span>`
+                : ''
+            }
           </div>
-          <button class="roster-remove-btn" data-delete-match="${mIdx}" title="Eliminar mesa">✕</button>
+          <div style="display:flex; align-items:center; gap:8px;">
+            ${
+              canReportThisMatch
+                ? `<button type="button" class="btn-gold-cta btn-sm player-report-match-btn" data-report-match-idx="${mIdx}">
+                    📲 ${match.p1.result && match.p2.result ? 'Editar Resultado' : 'Reportar Resultado'}
+                  </button>`
+                : ''
+            }
+            <button class="roster-remove-btn" data-delete-match="${mIdx}" title="Eliminar mesa">✕</button>
+          </div>
         </div>
 
         <div class="table-responsive">
@@ -2644,7 +2929,368 @@
     `;
   }
 
+  function renderPlayerSeatingHeroCard(currentRoundObj) {
+    const slot = document.getElementById('playerSeatingHeroSlot');
+    if (!slot) return;
+
+    const myId = getMyPlayerIdentity(state.roomCode);
+    if (!myId.name) {
+      slot.innerHTML = '';
+      return;
+    }
+
+    const standings = calculateStandings();
+    const myStandIdx = standings.findIndex((s) => isPlayerInEntity(s.name, myId.name));
+    const myStand = myStandIdx !== -1 ? standings[myStandIdx] : null;
+    const myRank = myStandIdx !== -1 ? myStandIdx + 1 : '-';
+    const myTp = myStand ? myStand.finalTp : 0;
+    const myDiff = myStand ? (myStand.vpDiff > 0 ? `+${myStand.vpDiff}` : String(myStand.vpDiff)) : '0';
+    const myVp = myStand ? myStand.vpFavor : 0;
+    const iAmDropped = isEntityDropped(myId.name);
+
+    const matches = (currentRoundObj && currentRoundObj.matches) || [];
+    const myMatchIdx = matches.findIndex((m) => isMatchMine(m));
+
+    if (myMatchIdx === -1) {
+      slot.innerHTML = `
+        <div class="seating-hero-card">
+          <div class="seating-hero-top" style="margin-bottom:8px; padding-bottom:8px;">
+            <span class="seating-eyebrow">🪖 JUGADOR IDENTIFICADO: ${escapeHtml(myId.name)} ${
+        myId.army ? `• 🛡️ ${escapeHtml(myId.army)}` : ''
+      }</span>
+            <span class="seating-record-pill">Posición: #${myRank}° • ${myTp} PT • Dif ${myDiff} • ${myVp} PV</span>
+          </div>
+          <div class="seating-actions-bar" style="border-top:none; padding-top:4px;">
+            <span class="helper-caption">
+              ${
+                iAmDropped
+                  ? '🏳️ <strong>Te has retirado (Drop)</strong> para las siguientes rondas. Tus puntos siguen registrados en el Podio.'
+                  : `⏳ Aún no tienes mesa asignada en la Ronda ${state.activeRound}. Cuando el Organizador empareje la ronda aparecerá aquí tu mesa y rival.`
+              }
+            </span>
+            ${
+              !state.tournamentFinished
+                ? `<button type="button" class="btn-elven-outline btn-sm btn-drop-player ${
+                    iAmDropped ? 'is-dropped' : ''
+                  }" id="btnToggleMyDropHero">
+                    ${iAmDropped ? '↺ Cancelar Drop y Seguir Jugando' : '🏳️ Retirarme para Siguiente Ronda (Drop)'}
+                  </button>`
+                : ''
+            }
+          </div>
+        </div>
+      `;
+      document.getElementById('btnToggleMyDropHero')?.addEventListener('click', toggleMyDropStatusFlow);
+      return;
+    }
+
+    const myMatch = matches[myMatchIdx];
+    const iAmP1 = isPlayerInEntity(myMatch.p1.name, myId.name);
+    const mySide = iAmP1 ? myMatch.p1 : myMatch.p2;
+    const oppSide = iAmP1 ? myMatch.p2 : myMatch.p1;
+    const myArmy = getEntityArmy(mySide.name) || myId.army;
+    const oppArmy = getEntityArmy(oppSide.name);
+
+    // Notificación sonora y visual automática cuando el Organizador publica el asiento de la ronda (Seatings Alert)
+    const seatingKey = `${state.roomCode}_R${currentRoundObj.round}_${myMatch.table}_${oppSide.name}`;
+    if (lastNotifiedSeatingKey !== seatingKey) {
+      lastNotifiedSeatingKey = seatingKey;
+      if (!isAdminMode) {
+        playTimerAlertSound();
+        showToast(
+          `⚔️ ¡Ronda ${currentRoundObj.round} emparejada! Te toca en ${myMatch.table} contra ${oppSide.name}.`
+        );
+      }
+    }
+
+    const hasResult = Boolean(mySide.result && oppSide.result);
+    const canReport =
+      !currentRoundObj.finished &&
+      !state.tournamentFinished &&
+      myMatch.p1.name !== 'BYE' &&
+      myMatch.p2.name !== 'BYE';
+
+    slot.innerHTML = `
+      <div class="seating-hero-card">
+        <div class="seating-hero-top">
+          <span class="seating-eyebrow">🔔 TU ASIENTO EN LA RONDA ${currentRoundObj.round}</span>
+          <span class="seating-record-pill">🏆 Lugar Actual: #${myRank}° • ${myTp} PT • Dif ${myDiff} • ${myVp} PV</span>
+        </div>
+
+        <div class="seating-hero-main">
+          <div class="seating-table-box">
+            <span class="seating-table-label">MESA ASIGNADA</span>
+            <strong class="seating-table-number">${escapeHtml(myMatch.table)}</strong>
+            ${
+              hasResult
+                ? `<span class="seating-score-summary">✓ Resultado Cargado</span>`
+                : `<span class="helper-caption" style="margin-top:2px;">En juego</span>`
+            }
+          </div>
+
+          <div class="seating-versus-grid">
+            <div class="seating-combatant">
+              <span class="seating-role-tag">🪖 TU BANDO</span>
+              <strong class="seating-player-name">${escapeHtml(mySide.name)}</strong>
+              ${myArmy ? `<div><span class="player-army-sub">🛡️ ${escapeHtml(myArmy)}</span></div>` : ''}
+              ${
+                hasResult
+                  ? `<span class="seating-score-summary">${escapeHtml(mySide.result)} • ${mySide.tp} PT • ${mySide.vp} PV</span>`
+                  : ''
+              }
+            </div>
+
+            <div class="seating-vs-badge">VS</div>
+
+            <div class="seating-combatant is-opponent">
+              <span class="seating-role-tag">⚔️ TU RIVAL</span>
+              <strong class="seating-player-name">${escapeHtml(oppSide.name)}</strong>
+              ${oppArmy ? `<div><span class="player-army-sub">🛡️ ${escapeHtml(oppArmy)}</span></div>` : ''}
+              ${
+                hasResult
+                  ? `<span class="seating-score-summary">${escapeHtml(oppSide.result)} • ${oppSide.tp} PT • ${oppSide.vp} PV</span>`
+                  : ''
+              }
+            </div>
+          </div>
+        </div>
+
+        <div class="seating-actions-bar">
+          <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+            ${
+              canReport
+                ? `<button type="button" class="btn-gold-cta btn-sm" id="btnOpenMyMatchReportHero">
+                    📲 ${hasResult ? 'Editar Resultado de Mi Mesa' : 'Reportar Resultado de Mi Mesa'}
+                  </button>`
+                : ''
+            }
+            ${
+              myMatch.reportedBy
+                ? `<span class="match-reported-pill">📲 Reportado por ${escapeHtml(myMatch.reportedBy)}</span>`
+                : ''
+            }
+            ${iAmDropped ? `<span class="drop-pill-tag">🏳️ Retirado para próxima ronda (Drop)</span>` : ''}
+          </div>
+
+          ${
+            !state.tournamentFinished
+              ? `<button type="button" class="btn-elven-outline btn-sm btn-drop-player ${
+                  iAmDropped ? 'is-dropped' : ''
+                }" id="btnToggleMyDropHero">
+                  ${iAmDropped ? '↺ Cancelar Drop y Seguir Jugando' : '🏳️ Retirarme para Siguiente Ronda (Drop)'}
+                </button>`
+              : ''
+          }
+        </div>
+      </div>
+    `;
+
+    document.getElementById('btnOpenMyMatchReportHero')?.addEventListener('click', () => {
+      openPlayerMatchReportModal(currentRoundObj.round, myMatchIdx);
+    });
+    document.getElementById('btnToggleMyDropHero')?.addEventListener('click', toggleMyDropStatusFlow);
+  }
+
+  function openPlayerMatchReportModal(roundNum, mIdx) {
+    if (state.tournamentFinished) {
+      showToast('🔒 El torneo ya fue finalizado oficialmente.');
+      return;
+    }
+    const rObj = (state.rounds || []).find((r) => Number(r.round) === Number(roundNum));
+    if (!rObj || rObj.finished || !rObj.matches || !rObj.matches[mIdx]) {
+      showToast('🔒 Esta ronda ya fue cerrada por el Organizador.');
+      return;
+    }
+
+    const match = rObj.matches[mIdx];
+    const p1Army = getEntityArmy(match.p1.name);
+    const p2Army = getEntityArmy(match.p2.name);
+
+    openModal(
+      `📲 Reportar Resultado — Ronda ${roundNum} • ${match.table}`,
+      `
+        <p style="margin-bottom:14px; color:var(--text-parchment);">
+          Ingresa los <strong>Puntos de Victoria de Escenario (PV)</strong> obtenidos por cada jugador en <strong>${escapeHtml(
+            match.table
+          )}</strong>. Los Puntos de Torneo (PT) se calcularán automáticamente y se enviarán en vivo al Organizador.
+        </p>
+
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(210px, 1fr)); gap:12px; margin-bottom:14px;">
+          <div style="background:rgba(12,24,21,0.92); border:1px solid var(--border-gold); border-radius:12px; padding:12px;">
+            <strong style="color:var(--gold-bright); font-family:var(--font-serif); font-size:0.95rem; display:block;">
+              1. ${escapeHtml(match.p1.name)}
+            </strong>
+            ${p1Army ? `<span class="player-army-sub" style="margin-bottom:8px;">🛡️ ${escapeHtml(p1Army)}</span>` : ''}
+            <div class="field-group" style="margin-top:8px;">
+              <label for="inputReportP1Vp">PV de Escenario logrados</label>
+              <input type="number" id="inputReportP1Vp" min="0" max="100" value="${Number(
+                match.p1.vp || 0
+              )}" style="font-size:1.1rem; font-weight:800; text-align:center;" />
+            </div>
+            <label style="display:inline-flex; align-items:center; gap:6px; margin-top:8px; font-size:0.78rem; color:var(--text-cream); cursor:pointer;">
+              <input type="checkbox" id="checkReportP1Surrender" ${match.p1.surrender ? 'checked' : ''} />
+              <span>¿Se rindió en la partida?</span>
+            </label>
+          </div>
+
+          <div style="background:rgba(12,24,21,0.92); border:1px solid var(--border-gold); border-radius:12px; padding:12px;">
+            <strong style="color:var(--gold-bright); font-family:var(--font-serif); font-size:0.95rem; display:block;">
+              2. ${escapeHtml(match.p2.name)}
+            </strong>
+            ${p2Army ? `<span class="player-army-sub" style="margin-bottom:8px;">🛡️ ${escapeHtml(p2Army)}</span>` : ''}
+            <div class="field-group" style="margin-top:8px;">
+              <label for="inputReportP2Vp">PV de Escenario logrados</label>
+              <input type="number" id="inputReportP2Vp" min="0" max="100" value="${Number(
+                match.p2.vp || 0
+              )}" style="font-size:1.1rem; font-weight:800; text-align:center;" />
+            </div>
+            <label style="display:inline-flex; align-items:center; gap:6px; margin-top:8px; font-size:0.78rem; color:var(--text-cream); cursor:pointer;">
+              <input type="checkbox" id="checkReportP2Surrender" ${match.p2.surrender ? 'checked' : ''} />
+              <span>¿Se rindió en la partida?</span>
+            </label>
+          </div>
+        </div>
+
+        <div id="liveMatchReportPreview" style="background:rgba(9,17,15,0.88); border:1px solid rgba(89,207,153,0.45); border-radius:10px; padding:10px 14px; margin-bottom:16px; text-align:center; font-size:0.84rem; color:var(--text-ivory);"></div>
+
+        <div class="modal-confirm-actions">
+          <button type="button" class="btn-elven-outline" id="btnCancelMatchReportModal">Cancelar</button>
+          <button type="button" class="btn-gold-cta" id="btnSubmitMatchReportModal">📲 Enviar Resultado de Mesa</button>
+        </div>
+      `
+    );
+
+    const inpP1 = document.getElementById('inputReportP1Vp');
+    const inpP2 = document.getElementById('inputReportP2Vp');
+    const chkP1 = document.getElementById('checkReportP1Surrender');
+    const chkP2 = document.getElementById('checkReportP2Surrender');
+    const previewEl = document.getElementById('liveMatchReportPreview');
+
+    function updatePreview() {
+      const tempMatch = {
+        p1: {
+          name: match.p1.name,
+          vp: Math.max(0, Math.min(100, Number(inpP1?.value || 0))),
+          surrender: !!chkP1?.checked,
+          abandonMatch: false,
+          abandonTournament: false,
+          result: '',
+          tp: 0,
+          manualTp: false
+        },
+        p2: {
+          name: match.p2.name,
+          vp: Math.max(0, Math.min(100, Number(inpP2?.value || 0))),
+          surrender: !!chkP2?.checked,
+          abandonMatch: false,
+          abandonTournament: false,
+          result: '',
+          tp: 0,
+          manualTp: false
+        }
+      };
+      recalculateMatch(tempMatch, tempMatch.p1.surrender || tempMatch.p2.surrender ? 'forfeit' : 'vp');
+      if (previewEl) {
+        previewEl.innerHTML = `
+          ⚔️ <strong>Resultado Calculado:</strong>
+          <strong style="color:var(--gold-bright);">${escapeHtml(tempMatch.p1.name)}</strong> (${tempMatch.p1.result} • <strong>${tempMatch.p1.tp} PT</strong> • ${tempMatch.p1.vp} PV)
+          &nbsp;vs&nbsp;
+          <strong style="color:var(--gold-bright);">${escapeHtml(tempMatch.p2.name)}</strong> (${tempMatch.p2.result} • <strong>${tempMatch.p2.tp} PT</strong> • ${tempMatch.p2.vp} PV)
+        `;
+      }
+    }
+
+    updatePreview();
+    [inpP1, inpP2, chkP1, chkP2].forEach((el) => {
+      el?.addEventListener('input', updatePreview);
+      el?.addEventListener('change', updatePreview);
+    });
+
+    document.getElementById('btnCancelMatchReportModal')?.addEventListener('click', closeModal);
+    document.getElementById('btnSubmitMatchReportModal')?.addEventListener('click', async () => {
+      const btnSubmit = document.getElementById('btnSubmitMatchReportModal');
+      if (btnSubmit) {
+        btnSubmit.disabled = true;
+        btnSubmit.textContent = '⏳ Enviando resultado...';
+      }
+
+      const ok = await submitPlayerMatchReportToCloud(
+        roundNum,
+        mIdx,
+        Number(inpP1?.value || 0),
+        Number(inpP2?.value || 0),
+        !!chkP1?.checked,
+        !!chkP2?.checked
+      );
+
+      if (!ok) {
+        if (btnSubmit) {
+          btnSubmit.disabled = false;
+          btnSubmit.textContent = '📲 Enviar Resultado de Mesa';
+        }
+        showToast('⚠️ Error de conexión al enviar el resultado. Intenta nuevamente.');
+        return;
+      }
+
+      closeModal();
+      renderAll();
+      showToast(`✅ ¡Resultado de ${match.table} enviado y actualizado en vivo!`);
+    });
+  }
+
+  function toggleMyDropStatusFlow() {
+    if (state.tournamentFinished) {
+      showToast('🔒 El torneo ya ha finalizado.');
+      return;
+    }
+    const myId = getMyPlayerIdentity(state.roomCode);
+    if (!myId.name) {
+      showToast('⚠️ Primero debes identificarte como jugador en la sala.');
+      return;
+    }
+
+    const currentlyDropped = isEntityDropped(myId.name);
+    if (!currentlyDropped) {
+      openConfirmModal(
+        '🏳️ Retirarse para la Siguiente Ronda (Drop)',
+        `¿Confirmas que deseas retirarte (Drop) del torneo después de esta ronda? Conservarás todos tus Puntos de Torneo y PV acumulados en la tabla del Podio, pero el sistema suizo ya no te asignará mesa en la próxima ronda.`,
+        '🏳️ Sí, Confirmar Drop',
+        async () => {
+          const ok = await submitPlayerDropStatusToCloud(myId.name, true, state.roomCode);
+          if (ok) {
+            renderAll();
+            showToast(`🏳️ "${myId.name}" marcado como Retirado (Drop) para la siguiente ronda.`);
+          } else {
+            showToast('⚠️ Error de conexión al registrar el Drop. Intenta nuevamente.');
+          }
+        }
+      );
+    } else {
+      openConfirmModal(
+        '↺ Cancelar Drop y Seguir Jugando',
+        `¿Deseas reactivar tu participación como "${myId.name}" para volver a ser emparejado en la siguiente ronda?`,
+        '↺ Sí, Volver al Torneo',
+        async () => {
+          const ok = await submitPlayerDropStatusToCloud(myId.name, false, state.roomCode);
+          if (ok) {
+            renderAll();
+            showToast(`✅ "${myId.name}" reactivado en el torneo.`);
+          } else {
+            showToast('⚠️ Error de conexión al reactivar. Intenta nuevamente.');
+          }
+        }
+      );
+    }
+  }
+
   function bindMatchCardEvents(container, currentRoundObj) {
+    container.querySelectorAll('button[data-report-match-idx]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        const mIdx = Number(e.currentTarget.dataset.reportMatchIdx);
+        openPlayerMatchReportModal(currentRoundObj.round, mIdx);
+      });
+    });
+
     container.querySelectorAll('button[data-toggle-pen-menu]').forEach((btn) => {
       btn.addEventListener('click', (e) => {
         const key = e.currentTarget.dataset.togglePenMenu;
@@ -2675,6 +3321,7 @@
         else if (res === 'E') match[otherSide].result = 'E';
 
         recalculateMatch(match, 'result');
+        match.lastAppliedReportAt = Date.now();
         saveState();
         renderRoundsView();
         renderSidebarStatus();
@@ -2707,6 +3354,7 @@
           }
         }
 
+        match.lastAppliedReportAt = Date.now();
         saveState();
         renderRoundsView();
         renderSidebarStatus();

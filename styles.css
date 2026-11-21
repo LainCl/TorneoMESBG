@@ -3340,5 +3340,230 @@ body.tournament-closed-mode #btnLaunchFairPlayVotingPodium {
   }
 }
 
+/* ==========================================================================
+   TARJETA GIGANTE "TU ASIENTO EN ESTA RONDA" + REPORTE DE MESA + DROP
+   ========================================================================== */
+.seating-hero-card {
+  background: linear-gradient(145deg, rgba(24, 48, 40, 0.96) 0%, rgba(11, 22, 19, 0.98) 100%);
+  border: 2px solid var(--gold-bright);
+  border-radius: 16px;
+  padding: 16px 20px;
+  margin-bottom: 16px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55), 0 0 24px rgba(212, 168, 67, 0.2);
+}
+
+.seating-hero-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding-bottom: 12px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid rgba(212, 168, 67, 0.3);
+}
+
+.seating-eyebrow {
+  font-family: var(--font-serif);
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  color: var(--gold-bright);
+  text-transform: uppercase;
+}
+
+.seating-record-pill {
+  font-family: var(--font-serif);
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-ivory);
+  background: rgba(8, 16, 14, 0.85);
+  border: 1px solid var(--border-gold);
+  border-radius: 999px;
+  padding: 4px 12px;
+}
+
+.seating-hero-main {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 18px;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.seating-table-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle, rgba(212, 168, 67, 0.22) 0%, rgba(10, 20, 17, 0.95) 100%);
+  border: 1.5px solid var(--gold-primary);
+  border-radius: 14px;
+  padding: 12px 20px;
+  min-width: 130px;
+  text-align: center;
+}
+
+.seating-table-label {
+  font-family: var(--font-serif);
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--gold-muted);
+  text-transform: uppercase;
+}
+
+.seating-table-number {
+  font-family: var(--font-serif);
+  font-size: 1.65rem;
+  font-weight: 900;
+  color: var(--gold-bright);
+  letter-spacing: 0.06em;
+  line-height: 1.15;
+}
+
+.seating-versus-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  background: rgba(8, 16, 14, 0.78);
+  border: 1px solid rgba(169, 189, 179, 0.2);
+  border-radius: 12px;
+  padding: 12px 16px;
+}
+
+.seating-combatant {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.seating-combatant.is-opponent {
+  text-align: right;
+  align-items: flex-end;
+}
+
+.seating-role-tag {
+  font-family: var(--font-serif);
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.seating-player-name {
+  font-family: var(--font-serif);
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: #ffffff;
+  word-break: break-word;
+}
+
+.seating-vs-badge {
+  font-family: var(--font-serif);
+  font-size: 0.85rem;
+  font-weight: 900;
+  color: var(--gold-bright);
+  background: rgba(212, 168, 67, 0.16);
+  border: 1px solid var(--border-gold);
+  border-radius: 999px;
+  padding: 6px 10px;
+}
+
+.seating-score-summary {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #7ef2bd;
+  margin-top: 2px;
+}
+
+.seating-actions-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(169, 189, 179, 0.14);
+}
+
+.match-reported-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-sans);
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #8bf5c4;
+  background: rgba(20, 68, 48, 0.85);
+  border: 1px solid rgba(89, 207, 153, 0.5);
+  border-radius: 999px;
+  padding: 2px 9px;
+}
+
+.drop-pill-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: #ffb8b5;
+  background: rgba(110, 32, 32, 0.78);
+  border: 1px solid rgba(224, 90, 84, 0.6);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.btn-drop-player {
+  border-color: rgba(224, 90, 84, 0.65) !important;
+  color: #ffb8b5 !important;
+}
+
+.btn-drop-player.is-dropped {
+  border-color: var(--win-green) !important;
+  color: #8bf5c4 !important;
+}
+
+/* Asegurar que el botón de reportar resultado en la tarjeta de mesa sea clicable para el jugador */
+body.spectator-mode .player-report-match-btn {
+  pointer-events: auto !important;
+  opacity: 1 !important;
+}
+
+@media (max-width: 768px) {
+  .seating-hero-main {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .seating-versus-grid {
+    grid-template-columns: minmax(0, 1fr);
+    text-align: center;
+    gap: 8px;
+  }
+
+  .seating-combatant,
+  .seating-combatant.is-opponent {
+    align-items: center;
+    text-align: center;
+  }
+
+  .seating-vs-badge {
+    margin: 0 auto;
+  }
+
+  .seating-actions-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .seating-actions-bar button {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+
 
 
