@@ -241,10 +241,12 @@
     try {
       const code = tournamentState.roomCode.toUpperCase();
       const name = tournamentState.tournamentName || 'Torneo MESBG';
+      const finished = !!tournamentState.tournamentFinished;
       let list = getRecentRooms().filter((item) => item && item.code !== code);
       list.unshift({
         code,
         name,
+        finished,
         updatedAt: Date.now()
       });
       if (list.length > 6) {
@@ -2109,11 +2111,16 @@
       .map((item) => {
         const isCurrent = item.code === state.roomCode;
         const owned = isRoomOwnedByMe(item.code);
+        const localSnap = getRoomFromLocalRegistry(item.code);
+        const isFinished = isCurrent
+          ? !!state.tournamentFinished
+          : !!(item.finished || (localSnap && localSnap.tournamentFinished));
         return `
-          <div class="recent-room-item ${isCurrent ? 'active-room' : ''}">
+          <div class="recent-room-item ${isCurrent ? 'active-room' : ''} ${isFinished ? 'is-finished-room' : ''}">
             <button type="button" class="recent-room-btn" data-recent-code="${escapeHtml(item.code)}" title="Entrar a sala ${escapeHtml(item.code)}">
               <span class="recent-room-code">${escapeHtml(item.code)}</span>
               <span class="recent-room-name">${escapeHtml(item.name || 'Torneo MESBG')}</span>
+              ${isFinished ? `<span class="recent-room-status is-finished">🔒 Finalizado</span>` : ''}
               <span class="recent-room-role ${owned ? 'is-owner' : ''}">${owned ? 'Organizador' : 'Jugador'}</span>
             </button>
             ${
@@ -5471,25 +5478,36 @@
     const specialAwardsSlot = document.getElementById('celebrationSpecialAwardsSlot');
     if (specialAwardsSlot) {
       const awards = calculateSpecialAwards(standings);
-      specialAwardsSlot.innerHTML = `
-        <div class="celebration-special-awards">
-          <span class="celebration-award-pill">⚔️ <strong>General Más Letal:</strong> ${
-            awards.lethalGeneral
-              ? `${escapeHtml(awards.lethalGeneral.name)} (${awards.lethalGeneral.vpFavor} PV)`
-              : 'Por definir'
-          }</span>
-          <span class="celebration-award-pill">🎨 <strong>Mejor Pintura:</strong> ${
-            awards.bestPaint
-              ? `${escapeHtml(awards.bestPaint.name)} (${awards.bestPaint.votes} voto${awards.bestPaint.votes === 1 ? '' : 's'})`
-              : 'Sin votos aún'
-          }</span>
-          <span class="celebration-award-pill">🤝 <strong>Premio Fair Play:</strong> ${
-            awards.bestFairPlay
-              ? `${escapeHtml(awards.bestFairPlay.name)} (${awards.bestFairPlay.votes} voto${awards.bestFairPlay.votes === 1 ? '' : 's'})`
-              : 'Sin votos aún'
-          }</span>
-        </div>
-      `;
+      const awardPills = [];
+
+      if (awards.lethalGeneral) {
+        awardPills.push(
+          `<span class="celebration-award-pill">⚔️ <strong>General Más Letal:</strong> ${escapeHtml(
+            awards.lethalGeneral.name
+          )} (${awards.lethalGeneral.vpFavor} PV)</span>`
+        );
+      }
+
+      if (awards.bestPaint && awards.bestPaint.votes > 0) {
+        awardPills.push(
+          `<span class="celebration-award-pill">🎨 <strong>Mejor Pintura:</strong> ${escapeHtml(
+            awards.bestPaint.name
+          )} (${awards.bestPaint.votes} voto${awards.bestPaint.votes === 1 ? '' : 's'})</span>`
+        );
+      }
+
+      if (awards.bestFairPlay && awards.bestFairPlay.votes > 0) {
+        awardPills.push(
+          `<span class="celebration-award-pill">🤝 <strong>Premio Fair Play:</strong> ${escapeHtml(
+            awards.bestFairPlay.name
+          )} (${awards.bestFairPlay.votes} voto${awards.bestFairPlay.votes === 1 ? '' : 's'})</span>`
+        );
+      }
+
+      specialAwardsSlot.innerHTML =
+        awardPills.length > 0
+          ? `<div class="celebration-special-awards">${awardPills.join('')}</div>`
+          : '';
     }
 
     const overlay = document.getElementById('podiumCelebrationOverlay');
