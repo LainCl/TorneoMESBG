@@ -2925,35 +2925,6 @@
     `;
   }
 
-  function getSelectablePlayersForSeating(currentRoundObj) {
-    const namesMap = new Map();
-    const addName = (raw) => {
-      const clean = String(raw || '').trim();
-      if (!clean || clean.toUpperCase() === 'BYE') return;
-      const lower = clean.toLowerCase();
-      if (!namesMap.has(lower)) {
-        namesMap.set(lower, clean);
-      }
-    };
-
-    Object.values(state.registrations || {}).forEach((r) => {
-      if (r && r.name) addName(r.name);
-    });
-    (state.players || []).forEach((p) => addName(p));
-    if (state.mode === 'teams') {
-      (state.teams || []).forEach((t) => {
-        (t.members || []).forEach((m) => addName(m));
-      });
-    }
-    const matches = (currentRoundObj && currentRoundObj.matches) || [];
-    matches.forEach((m) => {
-      if (m?.p1?.name) addName(m.p1.name);
-      if (m?.p2?.name) addName(m.p2.name);
-    });
-
-    return Array.from(namesMap.values()).sort((a, b) => a.localeCompare(b, 'es'));
-  }
-
   function triggerSeatingAlertNotification(roundNum, tableName, myName, oppName) {
     playTimerAlertSound();
     try {
@@ -2977,73 +2948,32 @@
     if (!slot) return;
 
     const myId = getMyPlayerIdentity(state.roomCode);
-    const selectablePlayers = getSelectablePlayersForSeating(currentRoundObj);
 
     if (!myId.name) {
-      if (selectablePlayers.length === 0 && state.tournamentFinished) {
+      if (state.tournamentFinished) {
         slot.innerHTML = '';
         return;
       }
 
-      const optionsHtml = selectablePlayers
-        .map((pName) => {
-          const pArmy = getEntityArmy(pName);
-          return `<option value="${escapeHtml(pName)}">${escapeHtml(pName)}${
-            pArmy ? ` (${escapeHtml(pArmy)})` : ''
-          }</option>`;
-        })
-        .join('');
-
       slot.innerHTML = `
         <div class="seating-hero-card">
           <div class="seating-hero-top" style="margin-bottom:10px; padding-bottom:8px;">
-            <span class="seating-eyebrow">🔔 TU ASIENTO EN ESTA RONDA (TABLET / MÓVIL / PC)</span>
+            <span class="seating-eyebrow">🔔 TU ASIENTO EN ESTA RONDA</span>
             <span class="seating-record-pill">Ronda Activa: ${state.activeRound}</span>
           </div>
           <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
             <span class="helper-caption" style="flex:1; min-width:220px;">
-              Selecciona tu jugador en este dispositivo para ver en gigante tu <strong>Mesa Asignada</strong>, tu <strong>Rival</strong>, reportar resultados y recibir la alerta sonora cuando se publique cada ronda:
+              Inscríbete como participante en este dispositivo para ver en gigante tu <strong>Mesa Asignada</strong>, tu <strong>Rival</strong>, reportar resultados de tu mesa y recibir la alerta sonora de cada ronda.
             </span>
-            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-              ${
-                selectablePlayers.length > 0
-                  ? `<select id="seatingQuickPlayerSelect" class="input-elven" style="min-width:210px; height:36px; padding:4px 10px;">
-                      <option value="">— Elige tu nombre / jugador —</option>
-                      ${optionsHtml}
-                    </select>
-                    <button type="button" class="btn-gold-cta btn-sm" id="btnApplyQuickSeatingPlayer">
-                      🪖 Ver Mi Asiento
-                    </button>`
-                  : ''
-              }
-              ${
-                !state.tournamentFinished && state.registrationOpen !== false
-                  ? `<button type="button" class="btn-elven-outline btn-sm" id="btnOpenRegFromSeatingCard">
-                      ➕ Inscribirme en Sala
-                    </button>`
-                  : ''
-              }
-            </div>
+            <button type="button" class="btn-gold-cta btn-sm" id="btnOpenRegFromSeatingCard">
+              🪖 Inscribirme en Sala
+            </button>
           </div>
         </div>
       `;
 
-      document.getElementById('btnApplyQuickSeatingPlayer')?.addEventListener('click', () => {
-        const sel = document.getElementById('seatingQuickPlayerSelect');
-        const chosen = sel ? String(sel.value || '').trim() : '';
-        if (!chosen) {
-          showToast('⚠️ Selecciona tu nombre en la lista desplegable.');
-          return;
-        }
-        const army = getEntityArmy(chosen);
-        setMyPlayerIdentity(state.roomCode, chosen, army, false);
-        lastNotifiedSeatingKey = '';
-        renderRoundsView();
-        renderPodiumView();
-      });
-
       document.getElementById('btnOpenRegFromSeatingCard')?.addEventListener('click', () => {
-        openPlayerRegistrationModal(false);
+        openPlayerRegistrationModal();
       });
       return;
     }
@@ -3067,12 +2997,7 @@
             <span class="seating-eyebrow">🪖 JUGADOR IDENTIFICADO: ${escapeHtml(myId.name)} ${
         myId.army ? `• 🛡️ ${escapeHtml(myId.army)}` : ''
       }</span>
-            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-              <span class="seating-record-pill">Posición: #${myRank}° • ${myTp} PT • Dif ${myDiff} • ${myVp} PV</span>
-              <button type="button" class="btn-elven-outline btn-xs" id="btnSwitchSeatingPlayerHero" title="Cambiar de jugador en esta Tablet / Dispositivo">
-                🔄 Cambiar Jugador
-              </button>
-            </div>
+            <span class="seating-record-pill">Posición: #${myRank}° • ${myTp} PT • Dif ${myDiff} • ${myVp} PV</span>
           </div>
           <div class="seating-actions-bar" style="border-top:none; padding-top:4px;">
             <span class="helper-caption">
@@ -3095,10 +3020,6 @@
         </div>
       `;
       document.getElementById('btnToggleMyDropHero')?.addEventListener('click', toggleMyDropStatusFlow);
-      document.getElementById('btnSwitchSeatingPlayerHero')?.addEventListener('click', () => {
-        setMyPlayerIdentity(state.roomCode, '', '', true);
-        renderRoundsView();
-      });
       return;
     }
 
@@ -3133,9 +3054,6 @@
             <span class="seating-record-pill">🏆 Lugar Actual: #${myRank}° • ${myTp} PT • Dif ${myDiff} • ${myVp} PV</span>
             <button type="button" class="btn-elven-outline btn-xs" id="btnTestSeatingAlertHero" title="Sonar alerta de asiento">
               🔔 Alerta
-            </button>
-            <button type="button" class="btn-elven-outline btn-xs" id="btnSwitchSeatingPlayerHero" title="Cambiar de jugador en esta Tablet / Dispositivo">
-              🔄 Cambiar Jugador
             </button>
           </div>
         </div>
@@ -3214,10 +3132,6 @@
     document.getElementById('btnToggleMyDropHero')?.addEventListener('click', toggleMyDropStatusFlow);
     document.getElementById('btnTestSeatingAlertHero')?.addEventListener('click', () => {
       triggerSeatingAlertNotification(currentRoundObj.round, myMatch.table, mySide.name, oppSide.name);
-    });
-    document.getElementById('btnSwitchSeatingPlayerHero')?.addEventListener('click', () => {
-      setMyPlayerIdentity(state.roomCode, '', '', true);
-      renderRoundsView();
     });
   }
 
@@ -4889,13 +4803,13 @@
             ? `
               <div style="background:rgba(12,24,21,0.88); border:1px solid var(--border-gold); border-radius:12px; padding:14px; margin-bottom:14px;">
                 <h4 style="margin-top:0; margin-bottom:10px; color:var(--gold-bright);">
-                  ${myId.name ? '✏️ Actualizar Mi Inscripción y Ejército' : '⚔️ 1. Inscribirme como Participante'}
+                  ${myId.name ? '🪖 Tu Inscripción Vinculada a este Dispositivo' : '⚔️ 1. Inscribirme como Participante'}
                 </h4>
                 <div class="field-group" style="margin-bottom:10px;">
-                  <label for="inputSelfRegName">Tu Nombre / Nick</label>
+                  <label for="inputSelfRegName">Tu Nombre / Nick ${myId.name ? '(Vinculado a tu asiento)' : ''}</label>
                   <input type="text" id="inputSelfRegName" maxlength="36" placeholder="Ej: Lain, Nine, Aragorn..." value="${escapeHtml(
                     myId.name
-                  )}" />
+                  )}" ${myId.name ? 'readonly disabled style="opacity:0.85; cursor:not-allowed;"' : ''} />
                 </div>
                 <div class="field-group" style="margin-bottom:12px;">
                   <label for="inputSelfRegArmy">Tu Ejército / Facción</label>
@@ -4904,23 +4818,23 @@
                   )}" />
                 </div>
                 <button type="button" class="btn-gold-cta" id="btnSubmitSelfRegistration" style="width:100%;">
-                  ⚔️ ${myId.name ? 'Guardar y Actualizar Mi Inscripción' : 'Inscribirme y Entrar al Torneo'}
+                  ⚔️ ${myId.name ? 'Guardar Mi Ejército' : 'Inscribirme y Entrar al Torneo'}
                 </button>
               </div>
             `
             : `
               <div style="background:rgba(82,36,24,0.38); border:1px solid rgba(224,112,92,0.5); border-radius:10px; padding:10px 12px; margin-bottom:14px; font-size:0.82rem; color:#ffd7cc;">
-                🔒 Las inscripciones nuevas ya fueron cerradas por el Organizador. Si ya estás inscrito, selecciona tu nombre abajo.
+                🔒 Las inscripciones nuevas ya fueron cerradas por el Organizador. Si el Organizador te inscribió manualmente, selecciona tu nombre abajo.
               </div>
             `
         }
 
         ${
-          regPool.length > 0
+          !myId.name && regPool.length > 0
             ? `
               <div style="background:rgba(9,17,15,0.82); border:1px solid rgba(169,189,179,0.28); border-radius:12px; padding:12px 14px; margin-bottom:14px;">
                 <label for="selectExistingPlayerIdentity" style="display:block; margin-bottom:6px; font-size:0.78rem; color:var(--text-cream);">
-                  ¿Ya estás en la lista de inscritos? Vincula tu celular:
+                  ¿El Organizador te agregó manualmente a la lista? Vincula tu dispositivo:
                 </label>
                 <div style="display:flex; gap:8px; flex-wrap:wrap;">
                   <select id="selectExistingPlayerIdentity" style="flex:1; min-width:170px;">${existingOptionsHtml}</select>
@@ -4932,9 +4846,13 @@
         }
 
         <div class="modal-confirm-actions" style="justify-content:space-between;">
-          <button type="button" class="btn-elven-outline btn-sm" id="btnEnterAsSpectatorOnly">
-            👁️ Solo mirar (Espectador)
-          </button>
+          ${
+            !myId.name
+              ? `<button type="button" class="btn-elven-outline btn-sm" id="btnEnterAsSpectatorOnly">
+                  👁️ Solo mirar (Espectador)
+                </button>`
+              : `<span></span>`
+          }
           <button type="button" class="btn-elven-outline btn-sm" id="btnCloseSelfRegModal">
             Cerrar
           </button>
@@ -4996,10 +4914,20 @@
     });
 
     document.getElementById('btnClaimExistingIdentity')?.addEventListener('click', () => {
+      if (myId.name) {
+        showToast('🔒 Tu dispositivo ya está vinculado a tu asiento de jugador.');
+        return;
+      }
       const sel = document.getElementById('selectExistingPlayerIdentity');
       const chosenName = (sel?.value || '').trim();
       if (!chosenName) {
         showToast('⚠️ Selecciona tu nombre de la lista.');
+        return;
+      }
+      const regKey = sanitizeFirebaseKey(chosenName);
+      const existingReg = state.registrations && state.registrations[regKey];
+      if (existingReg && existingReg.deviceId && existingReg.deviceId !== getMyDeviceId()) {
+        showToast('🔒 Ese jugador ya está vinculado a otro dispositivo. No puedes tomar el asiento de otro jugador.');
         return;
       }
       const chosenArmy = getEntityArmy(chosenName);
