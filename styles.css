@@ -2979,3 +2979,183 @@ body.spectator-mode .match-card .match-table-input {
   color: #6ee7b0 !important;
 }
 
+/* ==========================================================================
+   INSCRIPCIÓN POR CÓDIGO (NOMBRE + EJÉRCITO), BOLSA DE INSCRITOS Y PAREJAS
+   ========================================================================== */
+.player-identity-pill.is-identified {
+  border-color: var(--win-green);
+  background: rgba(18, 52, 38, 0.88);
+  color: #8bf5c4;
+}
+
+.manual-register-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.1fr) auto;
+  gap: 10px;
+  align-items: center;
+  margin-top: 12px;
+}
+
+.registered-pool-box {
+  margin-top: 14px;
+  background: rgba(8, 16, 14, 0.72);
+  border: 1px dashed rgba(202, 165, 84, 0.45);
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+
+.registered-pool-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.registered-pool-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pool-player-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: rgba(18, 34, 29, 0.94);
+  border: 1px solid rgba(202, 165, 84, 0.42);
+  border-radius: 999px;
+  padding: 5px 11px;
+  font-size: 0.78rem;
+  color: var(--text-ivory);
+}
+
+.pool-player-chip.is-assigned {
+  border-color: rgba(89, 207, 153, 0.45);
+  background: rgba(18, 48, 36, 0.72);
+}
+
+.pool-chip-army {
+  font-size: 0.7rem;
+  color: var(--gold-bright);
+  background: rgba(212, 168, 67, 0.14);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+.pool-chip-remove {
+  background: transparent;
+  border: none;
+  color: #ff9c99;
+  cursor: pointer;
+  font-size: 0.78rem;
+  padding: 0 2px;
+  line-height: 1;
+}
+
+.pairs-organizer-builder {
+  background: linear-gradient(145deg, rgba(16, 31, 27, 0.92), rgba(9, 18, 16, 0.95));
+  border: 1px solid var(--border-gold);
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+}
+
+.pairs-builder-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.pairs-builder-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.pairs-plus-sep {
+  color: var(--gold-bright);
+  font-weight: 800;
+  font-size: 1rem;
+  text-align: center;
+}
+
+.roster-item.with-army {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1.15fr) minmax(0, 0.95fr) 28px;
+  gap: 6px;
+  align-items: center;
+}
+
+.roster-army-input {
+  font-size: 0.76rem !important;
+  color: var(--gold-bright) !important;
+  background: rgba(9, 17, 15, 0.75) !important;
+}
+
+.player-army-sub {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--gold-primary);
+  background: rgba(212, 168, 67, 0.12);
+  border: 1px solid rgba(212, 168, 67, 0.28);
+  border-radius: 999px;
+  padding: 1px 8px;
+  margin-top: 3px;
+}
+
+.match-card.my-player-match {
+  border: 1.5px solid var(--gold-bright);
+  box-shadow: 0 0 22px rgba(212, 168, 67, 0.25);
+}
+
+.my-match-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-serif);
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: #101b17;
+  background: linear-gradient(135deg, #f3d486 0%, #c89d3c 100%);
+  border-radius: 999px;
+  padding: 3px 10px;
+}
+
+.team-member-row-grid {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+  width: 100%;
+}
+
+.team-pool-select {
+  max-width: 125px;
+  font-size: 0.72rem !important;
+  padding: 4px 6px !important;
+}
+
+@media (max-width: 768px) {
+  .manual-register-bar,
+  .pairs-builder-controls {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pairs-plus-sep {
+    display: none;
+  }
+
+  .roster-item.with-army {
+    grid-template-columns: 24px minmax(0, 1fr) minmax(0, 0.85fr) 26px;
+  }
+}
+
+

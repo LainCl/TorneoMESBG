@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@700;900&family=Cinzel:wght@500;600;700;800&family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=20261117_v5" />
+  <link rel="stylesheet" href="styles.css?v=20261121_v6" />
 </head>
 <body>
   <!-- Fondo atmosférico Rivendel nocturno -->
@@ -105,6 +105,9 @@
 
     <div class="top-session-row">
       <span class="live-sync-badge" id="liveSyncBadge" title="Código del torneo activo">⚪ ------</span>
+      <button type="button" class="ig-link-pill player-identity-pill" id="btnPlayerIdentityPill" title="Inscribirme o cambiar mi identidad de jugador en esta sala">
+        🪖 Inscribirme
+      </button>
       <button type="button" class="ig-link-pill admin-toggle-pill" id="btnToggleAdminMode" title="Cambiar entre Jugador y Organizador">
         Jugador
       </button>
@@ -363,16 +366,68 @@
             </div>
           </div>
 
+          <!-- Panel de Inscripción en Vivo por Código de Sala (Todos los Modos) -->
+          <div class="elven-block" id="liveRegistrationControlBlock">
+            <div class="block-header-flex">
+              <div>
+                <span class="elven-section-label">INSCRIPCIÓN EN VIVO DESDE CELULARES (CON CÓDIGO DE SALA)</span>
+                <p class="helper-caption" id="registrationStatusCaption">
+                  Los jugadores que entren con el código de sala pueden inscribirse indicando su <strong>Nombre / Nick</strong> y su <strong>Ejército</strong>.
+                </p>
+              </div>
+              <div class="inline-add-group">
+                <button type="button" class="btn-elven-outline btn-sm" id="btnToggleRegistrationOpen">
+                  🟢 Inscripciones Abiertas
+                </button>
+              </div>
+            </div>
+
+            <!-- Formulario manual para que el Organizador también pueda inscribir Jugador + Ejército -->
+            <div class="manual-register-bar">
+              <input type="text" id="inputNewPlayerName" placeholder="Nombre o Nick del jugador..." />
+              <input type="text" id="inputNewPlayerArmy" placeholder="Ejército / Facción (ej: Mordor, Gondor, Rohan)..." />
+              <button type="button" class="btn-elven-outline" id="btnAddPlayer">+ Inscribir Jugador</button>
+            </div>
+
+            <!-- Bolsa de jugadores inscritos individualmente (visible especialmente en Parejas y Equipos para armar duplas/escuadras) -->
+            <div class="registered-pool-box hidden" id="registeredPoolBox">
+              <div class="registered-pool-header">
+                <span class="companion-join-label">Jugadores Inscritos en la Sala (<strong id="poolCountLabel">0</strong>):</span>
+                <span class="helper-caption">Úsalos abajo para armar las parejas o asignarlos a los equipos.</span>
+              </div>
+              <div class="registered-pool-chips" id="registeredPoolChips"></div>
+            </div>
+          </div>
+
           <!-- Listado de Participantes (Individual / Parejas) -->
           <div class="elven-block" id="individualRosterBlock">
             <div class="block-header-flex">
               <div>
-                <span class="elven-section-label">LISTA DE PARTICIPANTES</span>
-                <p class="helper-caption">Total inscritos: <strong id="rosterCountLabel">0</strong> jugadores • Mesas requeridas: <strong id="requiredTablesLabel">0</strong></p>
+                <span class="elven-section-label" id="rosterBlockTitleLabel">LISTA DE PARTICIPANTES INSCRITOS</span>
+                <p class="helper-caption">Total en competencia: <strong id="rosterCountLabel">0</strong> • Mesas requeridas: <strong id="requiredTablesLabel">0</strong></p>
               </div>
-              <div class="inline-add-group">
-                <input type="text" id="inputNewPlayerName" placeholder="Nombre del jugador o pareja..." />
-                <button class="btn-elven-outline" id="btnAddPlayer">+ Agregar</button>
+            </div>
+
+            <!-- Panel exclusivo para que el Organizador arme las Parejas (2 vs 2) con los jugadores inscritos -->
+            <div class="pairs-organizer-builder hidden" id="pairsOrganizerBuilder">
+              <div class="pairs-builder-header">
+                <span class="companion-join-label">🤝 ARMAR PAREJAS (2 VS 2) CON LOS JUGADORES INSCRITOS:</span>
+                <button type="button" class="btn-elven-outline btn-sm" id="btnAutoPairRegistered">
+                  🎲 Emparejar Inscritos al Azar
+                </button>
+              </div>
+              <div class="pairs-builder-controls">
+                <select id="selectPairMember1">
+                  <option value="">-- Jugador 1 --</option>
+                </select>
+                <span class="pairs-plus-sep">+</span>
+                <select id="selectPairMember2">
+                  <option value="">-- Jugador 2 --</option>
+                </select>
+                <input type="text" id="inputCustomPairName" placeholder="Nombre de pareja (opcional)..." />
+                <button type="button" class="btn-gold-cta btn-sm" id="btnCreatePairFromPool">
+                  🤝 Formar Pareja
+                </button>
               </div>
             </div>
 
@@ -384,9 +439,14 @@
             <div class="block-header-flex">
               <div>
                 <span class="elven-section-label">FORMULARIO DE EQUIPOS E INTEGRANTES</span>
-                <p class="helper-caption">Configura el nombre de cada equipo y sus integrantes para habilitar los cruces y grupos de mesas.</p>
+                <p class="helper-caption">Asigna a los jugadores inscritos en cada equipo (o distribúyelos automáticamente) para habilitar los cruces y grupos de mesas.</p>
               </div>
-              <button class="btn-elven-outline" id="btnGenerateTeamTemplate">Generar Equipos</button>
+              <div class="inline-add-group">
+                <button type="button" class="btn-gold-cta btn-sm" id="btnAutoAssignTeamsFromPool" title="Repartir jugadores inscritos en los equipos">
+                  🎲 Asignar Inscritos a Equipos
+                </button>
+                <button type="button" class="btn-elven-outline btn-sm" id="btnGenerateTeamTemplate">Reiniciar Plantilla Equipos</button>
+              </div>
             </div>
             <div class="teams-roster-grid" id="teamsRosterContainer"></div>
           </div>
@@ -650,7 +710,7 @@
   <!-- Toast de Notificación -->
   <div id="toastContainer" class="toast-container"></div>
 
-  <script src="cloudConfig.js?v=20261117_v5"></script>
-  <script src="app.js?v=20261117_v5"></script>
+  <script src="cloudConfig.js?v=20261121_v6"></script>
+  <script src="app.js?v=20261121_v6"></script>
 </body>
 </html>

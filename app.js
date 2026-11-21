@@ -17,11 +17,90 @@
   let searchFilterQuery = '';
   let cloudEventSource = null;
   let votesEventSource = null;
+  let registrationsEventSource = null;
   let cloudPollTimer = null;
   let isApplyingRemoteUpdate = false;
   let timerIntervalId = null;
+  let lastAutoPromptedRegRoom = '';
   const warned15MinByRound = {};
   const warnedExpiredByRound = {};
+
+  function sanitizeFirebaseKey(raw) {
+    return String(raw || '')
+      .trim()
+      .replace(/[.#$/[\]\s]+/g, '_');
+  }
+
+  function getMyPlayerIdentity(roomCode) {
+    const code = String(roomCode || state.roomCode || '').trim().toUpperCase();
+    if (!code) return { key: '', name: '', army: '', isSpectator: false };
+    try {
+      const key = localStorage.getItem(`${VOTER_IDENTITY_KEY}_${code}`) || '';
+      const name = localStorage.getItem(`${VOTER_IDENTITY_KEY}_NAME_${code}`) || '';
+      const army = localStorage.getItem(`${VOTER_IDENTITY_KEY}_ARMY_${code}`) || '';
+      if (key === '__SPECTATOR__') {
+        return { key: '__SPECTATOR__', name: '', army: '', isSpectator: true };
+      }
+      const resolvedName =
+        name ||
+        (key && state.registrations && state.registrations[key] && state.registrations[key].name) ||
+        (state.players || []).find((p) => sanitizeFirebaseKey(p) === key) ||
+        '';
+      const resolvedArmy =
+        army ||
+        (resolvedName && state.playerArmies && state.playerArmies[resolvedName]) ||
+        (key && state.registrations && state.registrations[key] && state.registrations[key].army) ||
+        '';
+      return {
+        key: resolvedName ? sanitizeFirebaseKey(resolvedName) : key,
+        name: resolvedName,
+        army: resolvedArmy,
+        isSpectator: false
+      };
+    } catch (e) {
+      return { key: '', name: '', army: '', isSpectator: false };
+    }
+  }
+
+  function setMyPlayerIdentity(roomCode, name, army, isSpectator = false) {
+    const code = String(roomCode || state.roomCode || '').trim().toUpperCase();
+    if (!code) return;
+    try {
+      if (isSpectator) {
+        localStorage.setItem(`${VOTER_IDENTITY_KEY}_${code}`, '__SPECTATOR__');
+        localStorage.removeItem(`${VOTER_IDENTITY_KEY}_NAME_${code}`);
+        localStorage.removeItem(`${VOTER_IDENTITY_KEY}_ARMY_${code}`);
+      } else {
+        const cleanName = String(name || '').trim();
+        const cleanArmy = String(army || '').trim();
+        const key = sanitizeFirebaseKey(cleanName);
+        localStorage.setItem(`${VOTER_IDENTITY_KEY}_${code}`, key);
+        localStorage.setItem(`${VOTER_IDENTITY_KEY}_NAME_${code}`, cleanName);
+        localStorage.setItem(`${VOTER_IDENTITY_KEY}_ARMY_${code}`, cleanArmy);
+      }
+    } catch (e) {
+      // Ignorar
+    }
+    updatePlayerIdentityPillUI();
+  }
+
+  function getEntityArmy(entityName) {
+    if (!entityName || entityName === 'BYE') return '';
+    if (state.playerArmies && state.playerArmies[entityName]) {
+      return String(state.playerArmies[entityName]).trim();
+    }
+    if (state.registrations && typeof state.registrations === 'object') {
+      const key = sanitizeFirebaseKey(entityName);
+      if (state.registrations[key] && state.registrations[key].army) {
+        return String(state.registrations[key].army).trim();
+      }
+      const found = Object.values(state.registrations).find(
+        (r) => r && r.name && r.name.toLowerCase() === String(entityName).toLowerCase()
+      );
+      if (found && found.army) return String(found.army).trim();
+    }
+    return '';
+  }
 
   function syncUrlWithRoomCode(roomCode) {
     if (!roomCode) return;
@@ -149,9 +228,13 @@
     s.tablesPerTeam = Math.max(1, Number(s.tablesPerTeam) || 4);
     s.activeRound = Math.max(1, Number(s.activeRound) || 1);
     s.tournamentFinished = !!s.tournamentFinished;
+    s.registrationOpen = s.registrationOpen !== undefined ? !!s.registrationOpen : true;
     s.votingPaintOpen = !!s.votingPaintOpen;
     s.votingFairPlayOpen = !!s.votingFairPlayOpen;
     s.votes = s.votes && typeof s.votes === 'object' ? s.votes : {};
+    s.playerArmies = s.playerArmies && typeof s.playerArmies === 'object' ? s.playerArmies : {};
+    s.registrations = s.registrations && typeof s.registrations === 'object' ? s.registrations : {};
+    s.removedRegistrationKeys = Array.isArray(s.removedRegistrationKeys) ? s.removedRegistrationKeys : [];
     s.players = Array.isArray(s.players) ? s.players : [];
     s.teams = Array.isArray(s.teams)
       ? s.teams.map((t, i) => ({
@@ -276,9 +359,13 @@
       tablesPerTeam,
       activeRound: 1,
       tournamentFinished: false,
+      registrationOpen: true,
       votingPaintOpen: false,
       votingFairPlayOpen: false,
       votes: {},
+      playerArmies: {},
+      registrations: {},
+      removedRegistrationKeys: [],
       players: [],
       teams: createDefaultTeams(teamCount, membersPerTeam),
       tableGroups: createTableGroups(16, tablesPerTeam),
@@ -436,6 +523,13 @@
     return `${dbUrl}/votos_torneos/${code}.json`;
   }
 
+  function getRoomRegistrationsEndpoint(roomCode) {
+    const dbUrl = getFirebaseDbUrl();
+    const code = (roomCode || state.roomCode || 'DEFAULT').toUpperCase();
+    if (!dbUrl) return '';
+    return `${dbUrl}/inscripciones_torneos/${code}.json`;
+  }
+
   function getAdminPin() {
     return (window.MESBG_CLOUD_CONFIG && window.MESBG_CLOUD_CONFIG.ADMIN_PIN) || 'deazul2026';
   }
@@ -445,6 +539,40 @@
     if (!badge) return;
     badge.textContent = statusText;
     badge.classList.toggle('online', !!isOnline);
+  }
+
+  function updatePlayerIdentityPillUI() {
+    const pill = document.getElementById('btnPlayerIdentityPill');
+    if (!pill) return;
+    const myId = getMyPlayerIdentity(state.roomCode);
+    if (myId.name) {
+      const armySuffix = myId.army ? ` • ${myId.army}` : '';
+      pill.textContent = `🪖 ${myId.name}${armySuffix}`;
+      pill.classList.add('is-identified');
+    } else if (myId.isSpectator) {
+      pill.textContent = '👁️ Espectador (Inscribirme)';
+      pill.classList.remove('is-identified');
+    } else {
+      pill.textContent = '🪖 Inscribirme';
+      pill.classList.remove('is-identified');
+    }
+  }
+
+  function maybePromptPlayerRegistration() {
+    updatePlayerIdentityPillUI();
+    if (isAdminMode) return;
+    const code = String(state.roomCode || '').trim().toUpperCase();
+    if (!code || code.length < 4) return;
+
+    const myId = getMyPlayerIdentity(code);
+    if (myId.name || myId.isSpectator) return;
+
+    if (lastAutoPromptedRegRoom === code) return;
+    const modalEl = document.getElementById('elvenModal');
+    if (modalEl && !modalEl.classList.contains('hidden')) return;
+
+    lastAutoPromptedRegRoom = code;
+    openPlayerRegistrationModal();
   }
 
   async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
@@ -464,6 +592,7 @@
   function hasTournamentMeaningfulData(tState) {
     if (!tState || typeof tState !== 'object') return false;
     if (Array.isArray(tState.players) && tState.players.length > 0) return true;
+    if (tState.registrations && Object.keys(tState.registrations).length > 0) return true;
     if (tState.mode === 'teams' && Array.isArray(tState.teams) && tState.teams.length > 0) return true;
     if (
       Array.isArray(tState.rounds) &&
@@ -515,6 +644,164 @@
       updateLiveSyncBadge('⚠️ SIN CONEXIÓN', false);
     } finally {
       isPushingToCloud = false;
+    }
+  }
+
+  async function submitPlayerRegistrationToCloud(playerName, playerArmy, explicitRoomCode) {
+    const code = String(explicitRoomCode || state.roomCode || '').trim().toUpperCase();
+    const cleanName = String(playerName || '').trim();
+    const cleanArmy = String(playerArmy || '').trim();
+    if (!code || code.length < 4 || !cleanName) return false;
+
+    const regKey = sanitizeFirebaseKey(cleanName);
+    if (!regKey) return false;
+
+    const regObj = {
+      name: cleanName,
+      army: cleanArmy,
+      joinedAt: Date.now()
+    };
+
+    if (!state.registrations || typeof state.registrations !== 'object') {
+      state.registrations = {};
+    }
+    if (!state.playerArmies || typeof state.playerArmies !== 'object') {
+      state.playerArmies = {};
+    }
+    if (Array.isArray(state.removedRegistrationKeys)) {
+      state.removedRegistrationKeys = state.removedRegistrationKeys.filter((k) => k !== regKey);
+    }
+
+    state.registrations[regKey] = regObj;
+    if (cleanArmy) {
+      state.playerArmies[cleanName] = cleanArmy;
+    }
+
+    if (
+      state.mode === 'individual' &&
+      !state.players.some((p) => String(p).toLowerCase() === cleanName.toLowerCase())
+    ) {
+      state.players.push(cleanName);
+      state.totalTables = Math.max(state.totalTables, Math.ceil(state.players.length / 2));
+    }
+
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      saveRoomToLocalRegistry(state);
+    } catch (e) {
+      // Ignorar
+    }
+
+    const dbUrl = getFirebaseDbUrl();
+    if (!dbUrl) return true;
+    const regEndpoint = `${dbUrl}/inscripciones_torneos/${code}/${encodeURIComponent(regKey)}.json`;
+    try {
+      await fetchWithTimeout(regEndpoint, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(regObj)
+      });
+      if (isAdminMode) {
+        saveState();
+      }
+      return true;
+    } catch (err) {
+      console.warn('Error al guardar inscripción en Firebase:', err);
+      return false;
+    }
+  }
+
+  async function deletePlayerRegistrationFromCloud(playerName, explicitRoomCode) {
+    const code = String(explicitRoomCode || state.roomCode || '').trim().toUpperCase();
+    const cleanName = String(playerName || '').trim();
+    const regKey = sanitizeFirebaseKey(cleanName);
+    if (!code || !regKey) return;
+
+    if (state.registrations && state.registrations[regKey]) {
+      delete state.registrations[regKey];
+    }
+    if (!Array.isArray(state.removedRegistrationKeys)) {
+      state.removedRegistrationKeys = [];
+    }
+    if (!state.removedRegistrationKeys.includes(regKey)) {
+      state.removedRegistrationKeys.push(regKey);
+    }
+
+    const dbUrl = getFirebaseDbUrl();
+    if (!dbUrl) return;
+    const regEndpoint = `${dbUrl}/inscripciones_torneos/${code}/${encodeURIComponent(regKey)}.json`;
+    try {
+      await fetchWithTimeout(regEndpoint, { method: 'DELETE' });
+    } catch (err) {
+      console.warn('Error al eliminar inscripción en Firebase:', err);
+    }
+  }
+
+  async function pullRegistrationsFromCloud(explicitRoomCode) {
+    const code = String(explicitRoomCode || state.roomCode || '').trim().toUpperCase();
+    const regEndpoint = getRoomRegistrationsEndpoint(code);
+    if (!regEndpoint || !code) return;
+
+    try {
+      const res = await fetchWithTimeout(regEndpoint);
+      if (!res.ok) return;
+      const remoteRegs = await res.json();
+      if (code !== state.roomCode) return;
+
+      const cleanRegs =
+        remoteRegs && typeof remoteRegs === 'object' && !Array.isArray(remoteRegs) ? remoteRegs : {};
+      const removedSet = new Set(Array.isArray(state.removedRegistrationKeys) ? state.removedRegistrationKeys : []);
+
+      let rosterChanged = false;
+      if (!state.registrations || typeof state.registrations !== 'object') {
+        state.registrations = {};
+      }
+      if (!state.playerArmies || typeof state.playerArmies !== 'object') {
+        state.playerArmies = {};
+      }
+
+      const prevRegsJson = JSON.stringify(state.registrations);
+
+      Object.entries(cleanRegs).forEach(([key, item]) => {
+        if (!item || typeof item !== 'object' || removedSet.has(key)) return;
+        const pName = String(item.name || '').trim();
+        const pArmy = String(item.army || '').trim();
+        if (!pName) return;
+
+        state.registrations[key] = {
+          name: pName,
+          army: pArmy,
+          joinedAt: Number(item.joinedAt) || Date.now()
+        };
+        if (pArmy) {
+          state.playerArmies[pName] = pArmy;
+        }
+
+        // En modo Individual, si la inscripción está abierta, incorporar automáticamente al jugador a la lista
+        if (
+          state.mode === 'individual' &&
+          state.registrationOpen !== false &&
+          !state.players.some((p) => String(p).toLowerCase() === pName.toLowerCase())
+        ) {
+          state.players.push(pName);
+          state.totalTables = Math.max(state.totalTables, Math.ceil(state.players.length / 2));
+          rosterChanged = true;
+        }
+      });
+
+      const nextRegsJson = JSON.stringify(state.registrations);
+      if (prevRegsJson !== nextRegsJson || rosterChanged) {
+        if (isAdminMode && rosterChanged) {
+          saveState();
+        } else {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+          saveRoomToLocalRegistry(state);
+        }
+        renderAll();
+      }
+      updatePlayerIdentityPillUI();
+    } catch (e) {
+      // Ignorar errores de lectura de inscripciones
     }
   }
 
@@ -585,14 +872,15 @@
       const remoteData = await res.json();
       if (isPushingToCloud || state.roomCode !== currentCode) return false;
 
-      // Sincronizar votos desde el nodo independiente /votos_torneos/{code}
-      await pullVotesFromCloud(currentCode);
-
       if (isValidTournamentPayload(remoteData) && String(remoteData.roomCode).toUpperCase() === currentCode) {
         const preservedVotes = { ...(state.votes || {}), ...(remoteData.votes || {}) };
+        const preservedRegs = { ...(state.registrations || {}), ...(remoteData.registrations || {}) };
+        const preservedArmies = { ...(state.playerArmies || {}), ...(remoteData.playerArmies || {}) };
         const cleanRemote = normalizeState(remoteData, currentCode);
         cleanRemote.roomCode = currentCode;
         cleanRemote.votes = preservedVotes;
+        cleanRemote.registrations = preservedRegs;
+        cleanRemote.playerArmies = preservedArmies;
 
         const localTime = Number(state.updatedAt || 0);
         const remoteTime = Number(cleanRemote.updatedAt || 0);
@@ -622,14 +910,25 @@
             isApplyingRemoteUpdate = false;
           }
         }
+
+        // Sincronizar inscripciones y votos desde sus nodos independientes
+        await pullRegistrationsFromCloud(currentCode);
+        await pullVotesFromCloud(currentCode);
+        maybePromptPlayerRegistration();
+
         updateLiveSyncBadge(`🟢 ${state.roomCode}`, true);
         return true;
       }
+
+      await pullRegistrationsFromCloud(currentCode);
+      await pullVotesFromCloud(currentCode);
+
       // Si la sala aún no existe en Firebase y este navegador es el organizador, publicarla automáticamente
       if (isAdminMode && state && Array.isArray(state.rounds)) {
         await pushStateToCloud();
         return true;
       }
+      maybePromptPlayerRegistration();
       updateLiveSyncBadge(`🟢 ${state.roomCode}`, true);
       return false;
     } catch (err) {
@@ -658,7 +957,9 @@
             state = normalizeState(remoteData, code);
             state.roomCode = code;
             isAdminMode = isRoomOwnedByMe(code);
+            lastAutoPromptedRegRoom = '';
             syncUrlWithRoomCode(code);
+            await pullRegistrationsFromCloud(code);
             await pullVotesFromCloud(code);
             localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
             saveRoomToLocalRegistry(state);
@@ -671,6 +972,7 @@
                 ? `Conectado como Organizador a tu torneo "${state.tournamentName}" (ID: ${code}).`
                 : `Conectado como Jugador al torneo "${state.tournamentName}" (ID: ${code}).`
             );
+            maybePromptPlayerRegistration();
             return;
           }
         }
@@ -686,6 +988,7 @@
       state = normalizeState(localRoom, code);
       state.roomCode = code;
       isAdminMode = isRoomOwnedByMe(code);
+      lastAutoPromptedRegRoom = '';
       syncUrlWithRoomCode(code);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
       applyRoleModeUI();
@@ -697,6 +1000,7 @@
           ? `Torneo "${state.tournamentName}" (ID: ${code}) cargado como Organizador.`
           : `Torneo "${state.tournamentName}" (ID: ${code}) cargado como Jugador.`
       );
+      maybePromptPlayerRegistration();
       return;
     }
 
@@ -722,9 +1026,13 @@
       }
 
       const preservedVotes = { ...(state.votes || {}), ...(data.votes || {}) };
+      const preservedRegs = { ...(state.registrations || {}), ...(data.registrations || {}) };
+      const preservedArmies = { ...(state.playerArmies || {}), ...(data.playerArmies || {}) };
       const cleanRemote = normalizeState(data, currentCode);
       cleanRemote.roomCode = currentCode;
       cleanRemote.votes = preservedVotes;
+      cleanRemote.registrations = preservedRegs;
+      cleanRemote.playerArmies = preservedArmies;
 
       const remoteTime = Number(cleanRemote.updatedAt || 0);
       const localTime = Number(state.updatedAt || 0);
@@ -768,6 +1076,10 @@
       votesEventSource.close();
       votesEventSource = null;
     }
+    if (registrationsEventSource) {
+      registrationsEventSource.close();
+      registrationsEventSource = null;
+    }
     if (cloudPollTimer) {
       clearInterval(cloudPollTimer);
       cloudPollTimer = null;
@@ -779,6 +1091,7 @@
 
     const endpoint = getRoomCloudEndpoint(state.roomCode);
     const votesEndpoint = getRoomVotesEndpoint(state.roomCode);
+    const regsEndpoint = getRoomRegistrationsEndpoint(state.roomCode);
     if (!endpoint) {
       updateLiveSyncBadge(`⚪ ${state.roomCode}`, false);
       return;
@@ -808,6 +1121,18 @@
         vSse.addEventListener('put', onVoteEvent);
         vSse.addEventListener('patch', onVoteEvent);
         votesEventSource = vSse;
+      } catch (e) {
+        // Ignorar
+      }
+    }
+
+    if (regsEndpoint) {
+      try {
+        const rSse = new EventSource(regsEndpoint);
+        const onRegEvent = () => pullRegistrationsFromCloud(state.roomCode);
+        rSse.addEventListener('put', onRegEvent);
+        rSse.addEventListener('patch', onRegEvent);
+        registrationsEventSource = rSse;
       } catch (e) {
         // Ignorar
       }
@@ -1539,7 +1864,78 @@
     timerIntervalId = setInterval(updateRoundTimerUI, 1000);
   }
 
+  function getRegisteredPlayersList() {
+    const map = new Map();
+    if (state.registrations && typeof state.registrations === 'object') {
+      Object.entries(state.registrations).forEach(([key, val]) => {
+        if (!val || !val.name) return;
+        const cleanName = String(val.name).trim();
+        const cleanArmy = String(val.army || (state.playerArmies && state.playerArmies[cleanName]) || '').trim();
+        map.set(cleanName.toLowerCase(), {
+          key,
+          name: cleanName,
+          army: cleanArmy,
+          joinedAt: Number(val.joinedAt) || 0
+        });
+      });
+    }
+    if (state.mode === 'individual' && Array.isArray(state.players)) {
+      state.players.forEach((pName) => {
+        const cleanName = String(pName || '').trim();
+        if (!cleanName) return;
+        const lower = cleanName.toLowerCase();
+        if (!map.has(lower)) {
+          map.set(lower, {
+            key: sanitizeFirebaseKey(cleanName),
+            name: cleanName,
+            army: getEntityArmy(cleanName),
+            joinedAt: 0
+          });
+        }
+      });
+    }
+    return Array.from(map.values());
+  }
+
+  function isPlayerAssignedInCurrentMode(playerName) {
+    const lower = String(playerName || '').trim().toLowerCase();
+    if (!lower) return false;
+    if (state.mode === 'individual') {
+      return (state.players || []).some((p) => String(p).trim().toLowerCase() === lower);
+    }
+    if (state.mode === 'pairs') {
+      return (state.players || []).some((pairStr) =>
+        String(pairStr)
+          .split(/\s*[&+/]\s*|\s+y\s+/i)
+          .map((s) => s.trim().toLowerCase())
+          .includes(lower)
+      );
+    }
+    if (state.mode === 'teams') {
+      return (state.teams || []).some((t) =>
+        (t.members || []).some((m) => String(m).trim().toLowerCase() === lower)
+      );
+    }
+    return false;
+  }
+
+  function isMatchMine(match) {
+    const myId = getMyPlayerIdentity(state.roomCode);
+    const myName = String(myId.name || '').trim().toLowerCase();
+    if (!myName) return false;
+
+    const p1Name = String(match?.p1?.name || '').trim().toLowerCase();
+    const p2Name = String(match?.p2?.name || '').trim().toLowerCase();
+    if (p1Name === myName || p2Name === myName) return true;
+
+    const p1Parts = p1Name.split(/\s*[&+/]\s*|\s+y\s+/i).map((s) => s.trim());
+    const p2Parts = p2Name.split(/\s*[&+/]\s*|\s+y\s+/i).map((s) => s.trim());
+    return p1Parts.includes(myName) || p2Parts.includes(myName);
+  }
+
   function renderSetupView() {
+    updatePlayerIdentityPillUI();
+
     // Modalidad
     document.querySelectorAll('#modalityGrid .difficulty-card').forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.mode === state.mode);
@@ -1558,12 +1954,106 @@
     document.getElementById('inputMembersPerTeam').value = state.membersPerTeam;
     document.getElementById('inputTablesPerTeam').value = state.tablesPerTeam;
 
+    // Estado de Inscripciones Abiertas / Cerradas
+    const regOpen = state.registrationOpen !== false;
+    const btnToggleReg = document.getElementById('btnToggleRegistrationOpen');
+    if (btnToggleReg) {
+      btnToggleReg.textContent = regOpen ? '🟢 Inscripciones Abiertas' : '🔒 Inscripciones Cerradas';
+      btnToggleReg.classList.toggle('btn-voting-active', regOpen);
+    }
+    const regCaption = document.getElementById('registrationStatusCaption');
+    if (regCaption) {
+      regCaption.innerHTML = regOpen
+        ? `🟢 <strong>Inscripciones abiertas:</strong> Al entrar con el código <strong>${escapeHtml(
+            state.roomCode
+          )}</strong>, cada jugador se identifica con su <strong>Nombre / Nick</strong> y su <strong>Ejército</strong>.`
+        : `🔒 <strong>Inscripciones cerradas:</strong> Los nuevos visitantes solo podrán vincularse a un jugador ya inscrito o mirar como espectadores.`;
+    }
+
+    const regPool = getRegisteredPlayersList();
+    const poolBox = document.getElementById('registeredPoolBox');
+    const poolCountLabel = document.getElementById('poolCountLabel');
+    const poolChipsEl = document.getElementById('registeredPoolChips');
+    if (poolBox && poolChipsEl && poolCountLabel) {
+      const showPool = regPool.length > 0 || state.mode === 'pairs' || state.mode === 'teams';
+      poolBox.classList.toggle('hidden', !showPool);
+      poolCountLabel.textContent = String(regPool.length);
+
+      if (regPool.length === 0) {
+        poolChipsEl.innerHTML = `<span class="helper-caption">Aún no hay jugadores inscritos con el código ${escapeHtml(
+          state.roomCode
+        )}. Comparte el link o inscríbelos arriba.</span>`;
+      } else {
+        poolChipsEl.innerHTML = regPool
+          .map((item) => {
+            const assigned = isPlayerAssignedInCurrentMode(item.name);
+            return `
+              <span class="pool-player-chip ${assigned ? 'is-assigned' : ''}" title="${
+              assigned ? 'Ya asignado en el torneo' : 'Disponible para emparejar / asignar'
+            }">
+                <strong>${escapeHtml(item.name)}</strong>
+                ${item.army ? `<span class="pool-chip-army">🛡️ ${escapeHtml(item.army)}</span>` : ''}
+                <button type="button" class="pool-chip-remove" data-remove-pool-player="${escapeHtml(
+                  item.name
+                )}" title="Eliminar inscripción de ${escapeHtml(item.name)}">✕</button>
+              </span>
+            `;
+          })
+          .join('');
+
+        poolChipsEl.querySelectorAll('button[data-remove-pool-player]').forEach((btn) => {
+          btn.addEventListener('click', async (e) => {
+            const pName = e.currentTarget.dataset.removePoolPlayer;
+            if (!pName) return;
+            state.players = state.players.filter((p) => String(p).toLowerCase() !== pName.toLowerCase());
+            await deletePlayerRegistrationFromCloud(pName, state.roomCode);
+            saveState();
+            renderSetupView();
+            renderSidebarStatus();
+          });
+        });
+      }
+    }
+
     const isTeams = state.mode === 'teams';
+    const isPairs = state.mode === 'pairs';
     document.querySelectorAll('.team-only-field').forEach((el) => {
       el.classList.toggle('hidden', !isTeams);
     });
     document.getElementById('individualRosterBlock').classList.toggle('hidden', isTeams);
     document.getElementById('teamsRosterBlock').classList.toggle('hidden', !isTeams);
+
+    const rosterTitleEl = document.getElementById('rosterBlockTitleLabel');
+    if (rosterTitleEl) {
+      rosterTitleEl.textContent = isPairs
+        ? 'LISTA DE PAREJAS FORMADAS (2 VS 2)'
+        : 'LISTA DE PARTICIPANTES INSCRITOS';
+    }
+
+    const pairsBuilderEl = document.getElementById('pairsOrganizerBuilder');
+    if (pairsBuilderEl) {
+      pairsBuilderEl.classList.toggle('hidden', !isPairs);
+      if (isPairs) {
+        const sel1 = document.getElementById('selectPairMember1');
+        const sel2 = document.getElementById('selectPairMember2');
+        const unassigned = regPool.filter((r) => !isPlayerAssignedInCurrentMode(r.name));
+        const assigned = regPool.filter((r) => isPlayerAssignedInCurrentMode(r.name));
+        const orderedPool = [...unassigned, ...assigned];
+
+        const buildOpts = (placeholder) =>
+          [
+            `<option value="">${placeholder}</option>`,
+            ...orderedPool.map((r) => {
+              const armyTxt = r.army ? ` (${r.army})` : '';
+              const statusTxt = isPlayerAssignedInCurrentMode(r.name) ? ' [Ya en pareja]' : '';
+              return `<option value="${escapeHtml(r.name)}">${escapeHtml(r.name + armyTxt + statusTxt)}</option>`;
+            })
+          ].join('');
+
+        if (sel1) sel1.innerHTML = buildOpts('-- Selecciona Jugador 1 --');
+        if (sel2) sel2.innerHTML = buildOpts('-- Selecciona Jugador 2 --');
+      }
+    }
 
     if (!isTeams) {
       document.getElementById('rosterCountLabel').textContent = String(state.players.length);
@@ -1574,11 +2064,13 @@
       const listEl = document.getElementById('playersRosterList');
       listEl.innerHTML = '';
       state.players.forEach((pName, idx) => {
+        const currentArmy = getEntityArmy(pName);
         const div = document.createElement('div');
-        div.className = 'roster-item';
+        div.className = 'roster-item with-army';
         div.innerHTML = `
           <span class="roster-num">${idx + 1}</span>
-          <input type="text" value="${escapeHtml(pName)}" data-player-idx="${idx}" aria-label="Jugador ${idx + 1}" />
+          <input type="text" value="${escapeHtml(pName)}" data-player-idx="${idx}" aria-label="Jugador ${idx + 1}" placeholder="Nombre / Pareja" />
+          <input type="text" class="roster-army-input" value="${escapeHtml(currentArmy)}" data-army-idx="${idx}" aria-label="Ejército ${idx + 1}" placeholder="Ejército / Facción" />
           <button class="roster-remove-btn" data-remove-idx="${idx}" title="Eliminar participante">✕</button>
         `;
         listEl.appendChild(div);
@@ -1587,8 +2079,12 @@
       listEl.querySelectorAll('input[data-player-idx]').forEach((inp) => {
         inp.addEventListener('change', (e) => {
           const idx = Number(e.target.dataset.playerIdx);
+          const oldName = state.players[idx];
           const newVal = e.target.value.trim();
           if (newVal) {
+            if (oldName && state.playerArmies && state.playerArmies[oldName] && !state.playerArmies[newVal]) {
+              state.playerArmies[newVal] = state.playerArmies[oldName];
+            }
             state.players[idx] = newVal;
             saveState();
             renderSidebarStatus();
@@ -1596,10 +2092,34 @@
         });
       });
 
+      listEl.querySelectorAll('input[data-army-idx]').forEach((inp) => {
+        inp.addEventListener('change', (e) => {
+          const idx = Number(e.target.dataset.armyIdx);
+          const pName = state.players[idx];
+          const newArmy = e.target.value.trim();
+          if (!pName) return;
+          if (!state.playerArmies || typeof state.playerArmies !== 'object') {
+            state.playerArmies = {};
+          }
+          state.playerArmies[pName] = newArmy;
+          const regKey = sanitizeFirebaseKey(pName);
+          if (state.registrations && state.registrations[regKey]) {
+            state.registrations[regKey].army = newArmy;
+            submitPlayerRegistrationToCloud(pName, newArmy, state.roomCode);
+          }
+          saveState();
+          renderSetupView();
+        });
+      });
+
       listEl.querySelectorAll('button[data-remove-idx]').forEach((btn) => {
-        btn.addEventListener('click', (e) => {
+        btn.addEventListener('click', async (e) => {
           const idx = Number(e.currentTarget.dataset.removeIdx);
+          const removedName = state.players[idx];
           state.players.splice(idx, 1);
+          if (state.mode === 'individual' && removedName) {
+            await deletePlayerRegistrationFromCloud(removedName, state.roomCode);
+          }
           saveState();
           renderSetupView();
           renderSidebarStatus();
@@ -1608,18 +2128,41 @@
     } else {
       const container = document.getElementById('teamsRosterContainer');
       container.innerHTML = '';
+      const poolOptionsHtml = [
+        `<option value="">📥 Elegir inscrito...</option>`,
+        ...regPool.map(
+          (r) =>
+            `<option value="${escapeHtml(r.name)}">${escapeHtml(
+              r.name + (r.army ? ` (${r.army})` : '')
+            )}</option>`
+        )
+      ].join('');
+
       state.teams.forEach((team, tIdx) => {
         const card = document.createElement('div');
         card.className = 'team-roster-card';
         const membersInputs = team.members
-          .map(
-            (m, mIdx) => `
-            <div class="roster-item">
-              <span class="roster-num">${mIdx + 1}</span>
-              <input type="text" value="${escapeHtml(m)}" data-team-idx="${tIdx}" data-member-idx="${mIdx}" />
+          .map((m, mIdx) => {
+            const mArmy = getEntityArmy(m);
+            return `
+            <div class="roster-item" style="flex-direction:column; align-items:stretch; gap:4px;">
+              <div class="team-member-row-grid">
+                <span class="roster-num">${mIdx + 1}</span>
+                <input type="text" value="${escapeHtml(m)}" data-team-idx="${tIdx}" data-member-idx="${mIdx}" />
+                ${
+                  regPool.length > 0
+                    ? `<select class="team-pool-select" data-pick-team="${tIdx}" data-pick-member="${mIdx}" title="Asignar jugador inscrito en la sala">${poolOptionsHtml}</select>`
+                    : ''
+                }
+              </div>
+              ${
+                mArmy
+                  ? `<div style="padding-left:30px;"><span class="player-army-sub">🛡️ ${escapeHtml(mArmy)}</span></div>`
+                  : ''
+              }
             </div>
-          `
-          )
+          `;
+          })
           .join('');
 
         card.innerHTML = `
@@ -1644,6 +2187,19 @@
           const mIdx = Number(e.target.dataset.memberIdx);
           state.teams[tIdx].members[mIdx] = e.target.value.trim();
           saveState();
+          renderSetupView();
+        });
+      });
+
+      container.querySelectorAll('select[data-pick-team]').forEach((sel) => {
+        sel.addEventListener('change', (e) => {
+          const pickedName = e.target.value;
+          if (!pickedName) return;
+          const tIdx = Number(e.target.dataset.pickTeam);
+          const mIdx = Number(e.target.dataset.pickMember);
+          state.teams[tIdx].members[mIdx] = pickedName;
+          saveState();
+          renderSetupView();
         });
       });
     }
@@ -1741,16 +2297,26 @@
 
     const cleanFilter = (searchFilterQuery || '').trim().toLowerCase();
 
-    currentRoundObj.matches.forEach((match, mIdx) => {
+    // Si es un jugador identificado, ordenar su propia mesa primero en la vista
+    const indexedMatches = currentRoundObj.matches.map((match, mIdx) => ({
+      match,
+      mIdx,
+      mine: isMatchMine(match)
+    }));
+    if (!isAdminMode) {
+      indexedMatches.sort((a, b) => (a.mine === b.mine ? a.mIdx - b.mIdx : a.mine ? -1 : 1));
+    }
+
+    indexedMatches.forEach(({ match, mIdx, mine }) => {
       if (cleanFilter) {
-        const hay = `${match.table} ${match.p1.name} ${match.p2.name} ${match.team1 || ''} ${
-          match.team2 || ''
-        }`.toLowerCase();
+        const hay = `${match.table} ${match.p1.name} ${match.p2.name} ${getEntityArmy(match.p1.name)} ${getEntityArmy(
+          match.p2.name
+        )} ${match.team1 || ''} ${match.team2 || ''}`.toLowerCase();
         if (!hay.includes(cleanFilter)) return;
       }
 
       const card = document.createElement('div');
-      card.className = 'match-card';
+      card.className = `match-card ${mine ? 'my-player-match' : ''}`;
 
       const diff1 = Number(match.p1.vp || 0) - Number(match.p2.vp || 0);
       const diff2 = Number(match.p2.vp || 0) - Number(match.p1.vp || 0);
@@ -1770,6 +2336,7 @@
                 ? `<span class="helper-caption">(${escapeHtml(match.team1)} vs ${escapeHtml(match.team2)})</span>`
                 : ''
             }
+            ${mine ? `<span class="my-match-pill">⚔️ TU MESA</span>` : ''}
           </div>
           <button class="roster-remove-btn" data-delete-match="${mIdx}" title="Eliminar mesa">✕</button>
         </div>
@@ -1837,6 +2404,7 @@
     if (pObj.abandonTournament) incidentTags.push('Ab.Torn.');
     const hasIncident = incidentTags.length > 0;
     const toggleLabel = hasIncident ? `⚠️ ${incidentTags.join(' • ')}` : 'Penaliz.';
+    const playerArmy = getEntityArmy(pObj.name);
 
     return `
       <tr>
@@ -1846,6 +2414,7 @@
             ${extraOption}
             ${optionsHtml}
           </select>
+          ${playerArmy ? `<br/><span class="player-army-sub">🛡️ ${escapeHtml(playerArmy)}</span>` : ''}
         </td>
         <td>
           <div class="result-btn-group">
@@ -2297,6 +2866,11 @@
         ? `<div class="medal-card gold-1">
             <span class="medal-rank" style="color:#ffd700;">🥇 1° LUGAR • CAMPEÓN</span>
             <strong class="medal-name">${escapeHtml(first.name)}</strong>
+            ${
+              getEntityArmy(first.name)
+                ? `<div><span class="player-army-sub">🛡️ ${escapeHtml(getEntityArmy(first.name))}</span></div>`
+                : ''
+            }
             <div class="medal-metrics">
               <span><strong>${first.finalTp}</strong> PT</span>
               <span>Dif: <strong>${first.vpDiff > 0 ? '+' + first.vpDiff : first.vpDiff}</strong></span>
@@ -2308,6 +2882,11 @@
         ? `<div class="medal-card silver-2">
             <span class="medal-rank" style="color:#e0e0e0;">🥈 2° LUGAR • PLATA</span>
             <strong class="medal-name">${escapeHtml(second.name)}</strong>
+            ${
+              getEntityArmy(second.name)
+                ? `<div><span class="player-army-sub">🛡️ ${escapeHtml(getEntityArmy(second.name))}</span></div>`
+                : ''
+            }
             <div class="medal-metrics">
               <span><strong>${second.finalTp}</strong> PT</span>
               <span>Dif: <strong>${second.vpDiff > 0 ? '+' + second.vpDiff : second.vpDiff}</strong></span>
@@ -2319,6 +2898,11 @@
         ? `<div class="medal-card bronze-3">
             <span class="medal-rank" style="color:#e89b54;">🥉 3° LUGAR • BRONCE</span>
             <strong class="medal-name">${escapeHtml(third.name)}</strong>
+            ${
+              getEntityArmy(third.name)
+                ? `<div><span class="player-army-sub">🛡️ ${escapeHtml(getEntityArmy(third.name))}</span></div>`
+                : ''
+            }
             <div class="medal-metrics">
               <span><strong>${third.finalTp}</strong> PT</span>
               <span>Dif: <strong>${third.vpDiff > 0 ? '+' + third.vpDiff : third.vpDiff}</strong></span>
@@ -2330,6 +2914,11 @@
         ? `<div class="medal-card spoon-last">
             <span class="medal-rank" style="color:#dba088;">🪵 ÚLTIMO LUGAR ACTIVO</span>
             <strong class="medal-name">${escapeHtml(lastActive.name)}</strong>
+            ${
+              getEntityArmy(lastActive.name)
+                ? `<div><span class="player-army-sub">🛡️ ${escapeHtml(getEntityArmy(lastActive.name))}</span></div>`
+                : ''
+            }
             <div class="medal-metrics">
               <span><strong>${lastActive.finalTp}</strong> PT</span>
               <span>Dif: <strong>${lastActive.vpDiff}</strong></span>
@@ -2355,11 +2944,15 @@
       else if (isLastActive) rowClass = 'row-spoon-last';
       else if (row.abandoned) rowClass = 'row-abandoned';
 
+      const armyLabel = getEntityArmy(row.name);
       const tr = document.createElement('tr');
       tr.className = rowClass;
       tr.innerHTML = `
         <td><strong>#${pos}</strong></td>
-        <td><strong>${escapeHtml(row.name)}</strong></td>
+        <td>
+          <strong>${escapeHtml(row.name)}</strong>
+          ${armyLabel ? `<br/><span class="player-army-sub">🛡️ ${escapeHtml(armyLabel)}</span>` : ''}
+        </td>
         <td class="text-center">${
           row.abandoned
             ? '<span class="penalty-badge negative">Abandonó</span>'
@@ -2513,27 +3106,148 @@
       renderAll();
     });
 
-    // Agregar jugador individual
-    const addPlayerAction = () => {
-      const inp = document.getElementById('inputNewPlayerName');
-      const name = inp.value.trim();
-      if (!name) return;
-      if (state.players.includes(name)) {
-        showToast('⚠️ Ya existe un jugador con ese nombre en la lista.');
+    // Inscribir jugador (Nombre / Nick + Ejército)
+    const addPlayerAction = async () => {
+      const inpName = document.getElementById('inputNewPlayerName');
+      const inpArmy = document.getElementById('inputNewPlayerArmy');
+      const name = (inpName?.value || '').trim();
+      const army = (inpArmy?.value || '').trim();
+      if (!name) {
+        showToast('⚠️ Ingresa el Nombre o Nick del jugador.');
         return;
       }
-      state.players.push(name);
-      inp.value = '';
-      state.totalTables = Math.max(state.totalTables, Math.ceil(state.players.length / 2));
+
+      const regPool = getRegisteredPlayersList();
+      if (
+        state.players.some((p) => String(p).toLowerCase() === name.toLowerCase()) ||
+        (state.mode !== 'individual' && regPool.some((r) => r.name.toLowerCase() === name.toLowerCase()))
+      ) {
+        showToast('⚠️ Ya existe un jugador inscrito con ese nombre en la sala.');
+        return;
+      }
+
+      if (inpName) inpName.value = '';
+      if (inpArmy) inpArmy.value = '';
+
+      await submitPlayerRegistrationToCloud(name, army, state.roomCode);
       saveState();
       renderSetupView();
       renderSidebarStatus();
-      showToast(`Jugador "${name}" inscrito.`);
+      showToast(
+        army
+          ? `🪖 Jugador "${name}" (${army}) inscrito en la sala.`
+          : `🪖 Jugador "${name}" inscrito en la sala.`
+      );
     };
 
     document.getElementById('btnAddPlayer').addEventListener('click', addPlayerAction);
     document.getElementById('inputNewPlayerName').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') addPlayerAction();
+    });
+    document.getElementById('inputNewPlayerArmy')?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') addPlayerAction();
+    });
+
+    // Abrir / Cerrar Inscripciones por Código
+    document.getElementById('btnToggleRegistrationOpen')?.addEventListener('click', () => {
+      if (!isAdminMode) return;
+      state.registrationOpen = state.registrationOpen === false;
+      saveState();
+      renderSetupView();
+      showToast(
+        state.registrationOpen
+          ? '🟢 Inscripciones abiertas para jugadores que entren con el código.'
+          : '🔒 Inscripciones cerradas.'
+      );
+    });
+
+    // Modalidad Parejas (2 vs 2): Formar pareja manual desde jugadores inscritos
+    document.getElementById('btnCreatePairFromPool')?.addEventListener('click', () => {
+      const sel1 = document.getElementById('selectPairMember1');
+      const sel2 = document.getElementById('selectPairMember2');
+      const customInp = document.getElementById('inputCustomPairName');
+      const p1 = (sel1?.value || '').trim();
+      const p2 = (sel2?.value || '').trim();
+      if (!p1 || !p2) {
+        showToast('⚠️ Selecciona al Jugador 1 y al Jugador 2 de la lista de inscritos.');
+        return;
+      }
+      if (p1.toLowerCase() === p2.toLowerCase()) {
+        showToast('⚠️ Debes elegir a dos jugadores distintos para formar una pareja.');
+        return;
+      }
+      const customTitle = (customInp?.value || '').trim();
+      const pairName = customTitle ? `${customTitle} (${p1} & ${p2})` : `${p1} & ${p2}`;
+      if (state.players.some((p) => String(p).toLowerCase() === pairName.toLowerCase())) {
+        showToast('⚠️ Esa pareja ya está registrada en la lista.');
+        return;
+      }
+
+      const army1 = getEntityArmy(p1);
+      const army2 = getEntityArmy(p2);
+      const combinedArmy = [army1, army2].filter(Boolean).join(' + ');
+
+      state.players.push(pairName);
+      if (combinedArmy) {
+        if (!state.playerArmies || typeof state.playerArmies !== 'object') state.playerArmies = {};
+        state.playerArmies[pairName] = combinedArmy;
+      }
+      state.totalTables = Math.max(state.totalTables, Math.ceil(state.players.length / 2));
+      if (customInp) customInp.value = '';
+      saveState();
+      renderSetupView();
+      renderSidebarStatus();
+      showToast(`🤝 Pareja "${pairName}" formada con éxito.`);
+    });
+
+    // Modalidad Parejas (2 vs 2): Emparejar inscritos al azar
+    document.getElementById('btnAutoPairRegistered')?.addEventListener('click', () => {
+      const unassigned = getRegisteredPlayersList().filter((r) => !isPlayerAssignedInCurrentMode(r.name));
+      if (unassigned.length < 2) {
+        showToast('⚠️ Se necesitan al menos 2 jugadores inscritos sin pareja para emparejar al azar.');
+        return;
+      }
+      const shuffled = shuffleArray(unassigned);
+      let createdCount = 0;
+      for (let i = 0; i + 1 < shuffled.length; i += 2) {
+        const a = shuffled[i];
+        const b = shuffled[i + 1];
+        const pairName = `${a.name} & ${b.name}`;
+        const combinedArmy = [a.army, b.army].filter(Boolean).join(' + ');
+        state.players.push(pairName);
+        if (combinedArmy) {
+          if (!state.playerArmies || typeof state.playerArmies !== 'object') state.playerArmies = {};
+          state.playerArmies[pairName] = combinedArmy;
+        }
+        createdCount++;
+      }
+      state.totalTables = Math.max(state.totalTables, Math.ceil(state.players.length / 2));
+      saveState();
+      renderSetupView();
+      renderSidebarStatus();
+      showToast(`🎲 Se formaron ${createdCount} pareja(s) con los jugadores inscritos.`);
+    });
+
+    // Modalidad Equipos (4 vs 4): Distribuir jugadores inscritos en los equipos
+    document.getElementById('btnAutoAssignTeamsFromPool')?.addEventListener('click', () => {
+      const regPool = getRegisteredPlayersList();
+      if (regPool.length === 0) {
+        showToast('⚠️ Aún no hay jugadores inscritos en la sala para asignar a los equipos.');
+        return;
+      }
+      let cursor = 0;
+      for (let t = 0; t < state.teams.length; t++) {
+        for (let m = 0; m < state.membersPerTeam; m++) {
+          if (cursor < regPool.length) {
+            state.teams[t].members[m] = regPool[cursor].name;
+            cursor++;
+          }
+        }
+      }
+      saveState();
+      renderSetupView();
+      renderSidebarStatus();
+      showToast(`🎲 Se asignaron ${Math.min(cursor, regPool.length)} jugadores inscritos a los equipos.`);
     });
 
     // Generar formulario de equipos
@@ -2573,6 +3287,7 @@
         }
         state.activeRound = 1;
         state.tournamentFinished = false;
+        state.registrationOpen = false;
         saveState();
         switchTab('rounds');
         showToast(`Torneo inicializado con ${state.totalRounds} rondas. ¡Listo para emparejar Ronda 1!`);
@@ -2598,6 +3313,10 @@
         '🧹 Sí, Formatear Todo',
         () => {
           state.players = [];
+          state.registrations = {};
+          state.playerArmies = {};
+          state.removedRegistrationKeys = [];
+          state.registrationOpen = true;
           state.rounds = [];
           for (let r = 1; r <= state.totalRounds; r++) {
             state.rounds.push({
@@ -2620,6 +3339,10 @@
           state.votingPaintOpen = false;
           state.votingFairPlayOpen = false;
           state.explicitReset = true;
+          const regUrl = getRoomRegistrationsEndpoint(state.roomCode);
+          if (regUrl) {
+            fetchWithTimeout(regUrl, { method: 'DELETE' }).catch(() => {});
+          }
           saveState();
           delete state.explicitReset;
           renderAll();
@@ -3143,6 +3866,12 @@
       }
     });
 
+    // Botón Mi Identidad / Inscribirme en Sala
+    const btnIdentityPill = document.getElementById('btnPlayerIdentityPill');
+    if (btnIdentityPill) {
+      btnIdentityPill.addEventListener('click', openPlayerRegistrationModal);
+    }
+
     // Reconexión inmediata cuando el dispositivo recupera conexión o vuelve a primer plano (celular/pestaña)
     window.addEventListener('online', () => {
       startCloudRealtimeSync();
@@ -3152,6 +3881,151 @@
         pullStateFromCloud();
       }
     });
+  }
+
+  function openPlayerRegistrationModal() {
+    const lockedRoomCode = String(state.roomCode || '').trim().toUpperCase();
+    const regOpen = state.registrationOpen !== false;
+    const myId = getMyPlayerIdentity(lockedRoomCode);
+    const regPool = getRegisteredPlayersList();
+
+    const modeHint =
+      state.mode === 'pairs'
+        ? 'Inscríbete con tu Nombre y Ejército. El Organizador formará las parejas (2 vs 2) con los jugadores inscritos.'
+        : state.mode === 'teams'
+        ? 'Inscríbete con tu Nombre y Ejército. El Organizador asignará los equipos (4 vs 4) con los jugadores inscritos.'
+        : 'Inscríbete con tu Nombre y Ejército para quedar registrado inmediatamente en la lista del torneo.';
+
+    const existingOptionsHtml = [
+      `<option value="">-- Selecciona tu nombre si ya estás inscrito --</option>`,
+      ...regPool.map(
+        (r) =>
+          `<option value="${escapeHtml(r.name)}" ${
+            myId.name && r.name.toLowerCase() === myId.name.toLowerCase() ? 'selected' : ''
+          }>${escapeHtml(r.name + (r.army ? ` — 🛡️ ${r.army}` : ''))}</option>`
+      )
+    ].join('');
+
+    openModal(
+      `🪖 Identifícate en el Torneo (ID: ${lockedRoomCode})`,
+      `
+        <p style="margin-bottom:12px; color:var(--text-parchment);">
+          Bienvenido a <strong>${escapeHtml(state.tournamentName || 'Torneo MESBG')}</strong>. ${escapeHtml(modeHint)}
+        </p>
+
+        ${
+          regOpen || myId.name
+            ? `
+              <div style="background:rgba(12,24,21,0.88); border:1px solid var(--border-gold); border-radius:12px; padding:14px; margin-bottom:14px;">
+                <h4 style="margin-top:0; margin-bottom:10px; color:var(--gold-bright);">
+                  ${myId.name ? '✏️ Actualizar Mi Inscripción y Ejército' : '⚔️ 1. Inscribirme como Participante'}
+                </h4>
+                <div class="field-group" style="margin-bottom:10px;">
+                  <label for="inputSelfRegName">Tu Nombre / Nick</label>
+                  <input type="text" id="inputSelfRegName" maxlength="36" placeholder="Ej: Lain, Nine, Aragorn..." value="${escapeHtml(
+                    myId.name
+                  )}" />
+                </div>
+                <div class="field-group" style="margin-bottom:12px;">
+                  <label for="inputSelfRegArmy">Tu Ejército / Facción</label>
+                  <input type="text" id="inputSelfRegArmy" maxlength="44" placeholder="Ej: Mordor, Gondor, Rohan, Rivendel..." value="${escapeHtml(
+                    myId.army
+                  )}" />
+                </div>
+                <button type="button" class="btn-gold-cta" id="btnSubmitSelfRegistration" style="width:100%;">
+                  ⚔️ ${myId.name ? 'Guardar y Actualizar Mi Inscripción' : 'Inscribirme y Entrar al Torneo'}
+                </button>
+              </div>
+            `
+            : `
+              <div style="background:rgba(82,36,24,0.38); border:1px solid rgba(224,112,92,0.5); border-radius:10px; padding:10px 12px; margin-bottom:14px; font-size:0.82rem; color:#ffd7cc;">
+                🔒 Las inscripciones nuevas ya fueron cerradas por el Organizador. Si ya estás inscrito, selecciona tu nombre abajo.
+              </div>
+            `
+        }
+
+        ${
+          regPool.length > 0
+            ? `
+              <div style="background:rgba(9,17,15,0.82); border:1px solid rgba(169,189,179,0.28); border-radius:12px; padding:12px 14px; margin-bottom:14px;">
+                <label for="selectExistingPlayerIdentity" style="display:block; margin-bottom:6px; font-size:0.78rem; color:var(--text-cream);">
+                  ¿Ya estás en la lista de inscritos? Vincula tu celular:
+                </label>
+                <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                  <select id="selectExistingPlayerIdentity" style="flex:1; min-width:170px;">${existingOptionsHtml}</select>
+                  <button type="button" class="btn-elven-outline btn-sm" id="btnClaimExistingIdentity">✓ Soy este Jugador</button>
+                </div>
+              </div>
+            `
+            : ''
+        }
+
+        <div class="modal-confirm-actions" style="justify-content:space-between;">
+          <button type="button" class="btn-elven-outline btn-sm" id="btnEnterAsSpectatorOnly">
+            👁️ Solo mirar (Espectador)
+          </button>
+          <button type="button" class="btn-elven-outline btn-sm" id="btnCloseSelfRegModal">
+            Cerrar
+          </button>
+        </div>
+      `
+    );
+
+    const inpNameEl = document.getElementById('inputSelfRegName');
+    const inpArmyEl = document.getElementById('inputSelfRegArmy');
+    const btnSubmitEl = document.getElementById('btnSubmitSelfRegistration');
+
+    const handleSelfRegister = async () => {
+      const pName = (inpNameEl?.value || '').trim();
+      const pArmy = (inpArmyEl?.value || '').trim();
+      if (!pName) {
+        showToast('⚠️ Por favor ingresa tu Nombre o Nick.');
+        return;
+      }
+      if (!pArmy) {
+        showToast('⚠️ Por favor ingresa tu Ejército o Facción.');
+        return;
+      }
+
+      if (btnSubmitEl) {
+        btnSubmitEl.disabled = true;
+        btnSubmitEl.textContent = '⏳ Inscribiendo en la sala...';
+      }
+
+      await submitPlayerRegistrationToCloud(pName, pArmy, lockedRoomCode);
+      setMyPlayerIdentity(lockedRoomCode, pName, pArmy, false);
+      closeModal();
+      renderAll();
+      showToast(`✅ ¡Inscrito como "${pName}" con ejército "${pArmy}"!`);
+    };
+
+    btnSubmitEl?.addEventListener('click', handleSelfRegister);
+    inpArmyEl?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') handleSelfRegister();
+    });
+
+    document.getElementById('btnClaimExistingIdentity')?.addEventListener('click', () => {
+      const sel = document.getElementById('selectExistingPlayerIdentity');
+      const chosenName = (sel?.value || '').trim();
+      if (!chosenName) {
+        showToast('⚠️ Selecciona tu nombre de la lista.');
+        return;
+      }
+      const chosenArmy = getEntityArmy(chosenName);
+      setMyPlayerIdentity(lockedRoomCode, chosenName, chosenArmy, false);
+      closeModal();
+      renderAll();
+      showToast(`🪖 Identificado como "${chosenName}"${chosenArmy ? ` (${chosenArmy})` : ''}.`);
+    });
+
+    document.getElementById('btnEnterAsSpectatorOnly')?.addEventListener('click', () => {
+      setMyPlayerIdentity(lockedRoomCode, '', '', true);
+      closeModal();
+      renderAll();
+      showToast('👁️ Viendo el torneo en modo Espectador. Puedes inscribirte en cualquier momento desde el botón superior.');
+    });
+
+    document.getElementById('btnCloseSelfRegModal')?.addEventListener('click', closeModal);
   }
 
   function openSpecialVotingModal() {
@@ -3171,35 +4045,51 @@
       return;
     }
 
-    let savedVoterKey = '';
-    try {
-      savedVoterKey = localStorage.getItem(`${VOTER_IDENTITY_KEY}_${lockedRoomCode}`) || '';
-    } catch (e) {
-      // Ignorar
-    }
+    const myId = getMyPlayerIdentity(lockedRoomCode);
+    const savedVoterKey = myId.key && myId.key !== '__SPECTATOR__' ? myId.key : '';
 
     const existingVote =
       savedVoterKey && state.votes && state.votes[savedVoterKey] ? state.votes[savedVoterKey] : null;
-    const savedVoterName = existingVote?.voter || candidates.find((c) => c.replace(/[.#$/[\]]/g, '_') === savedVoterKey) || '';
+
+    // Si el jugador se inscribió individualmente y luego fue puesto en una pareja, encontrar su entidad en candidates
+    const matchedCandidateForMe = myId.name
+      ? candidates.find(
+          (c) =>
+            c.toLowerCase() === myId.name.toLowerCase() ||
+            c
+              .split(/\s*[&+/]\s*|\s+y\s+/i)
+              .map((s) => s.trim().toLowerCase())
+              .includes(myId.name.toLowerCase())
+        )
+      : '';
+
+    const savedVoterName =
+      matchedCandidateForMe ||
+      existingVote?.voter ||
+      candidates.find((c) => sanitizeFirebaseKey(c) === savedVoterKey) ||
+      '';
     const currentPaint = existingVote?.paintVote || existingVote?.paint || '';
     const currentFairPlay = existingVote?.fairPlayVote || existingVote?.fairPlay || '';
 
     const voterOptionsHtml = [
       `<option value="">-- Selecciona tu nombre en el torneo --</option>`,
-      ...candidates.map(
-        (c) => `<option value="${escapeHtml(c)}" ${c === savedVoterName ? 'selected' : ''}>${escapeHtml(c)}</option>`
-      )
+      ...candidates.map((c) => {
+        const cArmy = getEntityArmy(c);
+        return `<option value="${escapeHtml(c)}" ${c === savedVoterName ? 'selected' : ''}>${escapeHtml(
+          c + (cArmy ? ` (${cArmy})` : '')
+        )}</option>`;
+      })
     ].join('');
 
     openModal(
       '🗳️ Votación de Reconocimientos Especiales',
       `
         <p style="margin-bottom:14px; color:var(--text-parchment);">
-          Selecciona primero tu nombre y luego elige a tu candidato. <strong>No está permitido votar por uno mismo.</strong>
+          Selecciona tu candidato favorito. <strong>No está permitido votar por uno mismo.</strong>
         </p>
 
         <div class="field-group" style="margin-bottom:14px;">
-          <label for="selectVoterIdentity">1. ¿Quién eres? (Tu Nombre / Participante)</label>
+          <label for="selectVoterIdentity">1. Tu Identidad en el Torneo</label>
           <select id="selectVoterIdentity">${voterOptionsHtml}</select>
         </div>
 
@@ -3238,24 +4128,24 @@
       if (selectPaintEl) {
         selectPaintEl.innerHTML = [
           `<option value="">-- Elige tu voto para Mejor Pintura --</option>`,
-          ...otherCandidates.map(
-            (c) =>
-              `<option value="${escapeHtml(c)}" ${
-                c === preferredPaint && c !== selectedVoter ? 'selected' : ''
-              }>🎨 ${escapeHtml(c)}</option>`
-          )
+          ...otherCandidates.map((c) => {
+            const cArmy = getEntityArmy(c);
+            return `<option value="${escapeHtml(c)}" ${
+              c === preferredPaint && c !== selectedVoter ? 'selected' : ''
+            }>🎨 ${escapeHtml(c + (cArmy ? ` — 🛡️ ${cArmy}` : ''))}</option>`;
+          })
         ].join('');
       }
 
       if (selectFairEl) {
         selectFairEl.innerHTML = [
           `<option value="">-- Elige tu voto para Premio Fair Play --</option>`,
-          ...otherCandidates.map(
-            (c) =>
-              `<option value="${escapeHtml(c)}" ${
-                c === preferredFair && c !== selectedVoter ? 'selected' : ''
-              }>🤝 ${escapeHtml(c)}</option>`
-          )
+          ...otherCandidates.map((c) => {
+            const cArmy = getEntityArmy(c);
+            return `<option value="${escapeHtml(c)}" ${
+              c === preferredFair && c !== selectedVoter ? 'selected' : ''
+            }>🤝 ${escapeHtml(c + (cArmy ? ` — 🛡️ ${cArmy}` : ''))}</option>`;
+          })
         ].join('');
       }
     }
@@ -3265,7 +4155,7 @@
     if (selectVoterEl) {
       selectVoterEl.addEventListener('change', () => {
         const who = selectVoterEl.value;
-        const whoKey = who.replace(/[.#$/[\]]/g, '_');
+        const whoKey = sanitizeFirebaseKey(who);
         const prev = whoKey && state.votes && state.votes[whoKey] ? state.votes[whoKey] : null;
         const prevPaint = prev?.paintVote || prev?.paint || (selectPaintEl ? selectPaintEl.value : '');
         const prevFair = prev?.fairPlayVote || prev?.fairPlay || (selectFairEl ? selectFairEl.value : '');
@@ -3276,7 +4166,7 @@
     document.getElementById('btnCancelVoteModal')?.addEventListener('click', closeModal);
     document.getElementById('btnSubmitVoteModal')?.addEventListener('click', async () => {
       const voterName = (selectVoterEl?.value || '').trim();
-      const voterKey = voterName.replace(/[.#$/[\]]/g, '_');
+      const voterKey = sanitizeFirebaseKey(voterName);
       const prevVoteObj = voterKey && state.votes && state.votes[voterKey] ? state.votes[voterKey] : {};
 
       const paintVote = paintOpen
@@ -3307,10 +4197,8 @@
         return;
       }
 
-      try {
-        localStorage.setItem(`${VOTER_IDENTITY_KEY}_${lockedRoomCode}`, voterKey);
-      } catch (e) {
-        // Ignorar
+      if (!myId.name) {
+        setMyPlayerIdentity(lockedRoomCode, voterName, getEntityArmy(voterName), false);
       }
 
       await submitPlayerVoteToCloud(
