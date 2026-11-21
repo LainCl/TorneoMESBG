@@ -127,8 +127,7 @@
     if (!eLower || !pLower || eLower === 'bye') return false;
     if (eLower === pLower) return true;
     const parts = eLower
-      .replace(/[()]/g, ' ')
-      .split(/\s*[&+/]\s*|\s+y\s+/i)
+      .split(/\s*[()&+/]\s*|\s+y\s+/i)
       .map((s) => s.trim())
       .filter(Boolean);
     return parts.includes(pLower);
@@ -2332,16 +2331,13 @@
 
   function isMatchMine(match) {
     const myId = getMyPlayerIdentity(state.roomCode);
-    const myName = String(myId.name || '').trim().toLowerCase();
-    if (!myName) return false;
-
-    const p1Name = String(match?.p1?.name || '').trim().toLowerCase();
-    const p2Name = String(match?.p2?.name || '').trim().toLowerCase();
-    if (p1Name === myName || p2Name === myName) return true;
-
-    const p1Parts = p1Name.split(/\s*[&+/]\s*|\s+y\s+/i).map((s) => s.trim());
-    const p2Parts = p2Name.split(/\s*[&+/]\s*|\s+y\s+/i).map((s) => s.trim());
-    return p1Parts.includes(myName) || p2Parts.includes(myName);
+    const myName = String(myId.name || '').trim();
+    if (!myName || !match) return false;
+    if (isPlayerInMatch(match, myName)) return true;
+    if (state.mode === 'teams') {
+      return isPlayerInEntity(match.team1, myName) || isPlayerInEntity(match.team2, myName);
+    }
+    return false;
   }
 
   function renderSetupView() {
@@ -2929,13 +2925,126 @@
     `;
   }
 
+  function getSelectablePlayersForSeating(currentRoundObj) {
+    const namesMap = new Map();
+    const addName = (raw) => {
+      const clean = String(raw || '').trim();
+      if (!clean || clean.toUpperCase() === 'BYE') return;
+      const lower = clean.toLowerCase();
+      if (!namesMap.has(lower)) {
+        namesMap.set(lower, clean);
+      }
+    };
+
+    Object.values(state.registrations || {}).forEach((r) => {
+      if (r && r.name) addName(r.name);
+    });
+    (state.players || []).forEach((p) => addName(p));
+    if (state.mode === 'teams') {
+      (state.teams || []).forEach((t) => {
+        (t.members || []).forEach((m) => addName(m));
+      });
+    }
+    const matches = (currentRoundObj && currentRoundObj.matches) || [];
+    matches.forEach((m) => {
+      if (m?.p1?.name) addName(m.p1.name);
+      if (m?.p2?.name) addName(m.p2.name);
+    });
+
+    return Array.from(namesMap.values()).sort((a, b) => a.localeCompare(b, 'es'));
+  }
+
+  function triggerSeatingAlertNotification(roundNum, tableName, myName, oppName) {
+    playTimerAlertSound();
+    try {
+      if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+        navigator.vibrate([220, 100, 220]);
+      }
+    } catch (e) {
+      // Ignorar si el navegador bloquea vibración
+    }
+    if (!isAdminMode) {
+      const roundsView = document.getElementById('view-rounds');
+      if (roundsView && !roundsView.classList.contains('active')) {
+        switchTab('rounds');
+      }
+    }
+    showToast(`⚔️ ¡Ronda ${roundNum} emparejada! (${myName}) → ${tableName} vs ${oppName}`);
+  }
+
   function renderPlayerSeatingHeroCard(currentRoundObj) {
     const slot = document.getElementById('playerSeatingHeroSlot');
     if (!slot) return;
 
     const myId = getMyPlayerIdentity(state.roomCode);
+    const selectablePlayers = getSelectablePlayersForSeating(currentRoundObj);
+
     if (!myId.name) {
-      slot.innerHTML = '';
+      if (selectablePlayers.length === 0 && state.tournamentFinished) {
+        slot.innerHTML = '';
+        return;
+      }
+
+      const optionsHtml = selectablePlayers
+        .map((pName) => {
+          const pArmy = getEntityArmy(pName);
+          return `<option value="${escapeHtml(pName)}">${escapeHtml(pName)}${
+            pArmy ? ` (${escapeHtml(pArmy)})` : ''
+          }</option>`;
+        })
+        .join('');
+
+      slot.innerHTML = `
+        <div class="seating-hero-card">
+          <div class="seating-hero-top" style="margin-bottom:10px; padding-bottom:8px;">
+            <span class="seating-eyebrow">🔔 TU ASIENTO EN ESTA RONDA (TABLET / MÓVIL / PC)</span>
+            <span class="seating-record-pill">Ronda Activa: ${state.activeRound}</span>
+          </div>
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+            <span class="helper-caption" style="flex:1; min-width:220px;">
+              Selecciona tu jugador en este dispositivo para ver en gigante tu <strong>Mesa Asignada</strong>, tu <strong>Rival</strong>, reportar resultados y recibir la alerta sonora cuando se publique cada ronda:
+            </span>
+            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+              ${
+                selectablePlayers.length > 0
+                  ? `<select id="seatingQuickPlayerSelect" class="input-elven" style="min-width:210px; height:36px; padding:4px 10px;">
+                      <option value="">— Elige tu nombre / jugador —</option>
+                      ${optionsHtml}
+                    </select>
+                    <button type="button" class="btn-gold-cta btn-sm" id="btnApplyQuickSeatingPlayer">
+                      🪖 Ver Mi Asiento
+                    </button>`
+                  : ''
+              }
+              ${
+                !state.tournamentFinished && state.registrationOpen !== false
+                  ? `<button type="button" class="btn-elven-outline btn-sm" id="btnOpenRegFromSeatingCard">
+                      ➕ Inscribirme en Sala
+                    </button>`
+                  : ''
+              }
+            </div>
+          </div>
+        </div>
+      `;
+
+      document.getElementById('btnApplyQuickSeatingPlayer')?.addEventListener('click', () => {
+        const sel = document.getElementById('seatingQuickPlayerSelect');
+        const chosen = sel ? String(sel.value || '').trim() : '';
+        if (!chosen) {
+          showToast('⚠️ Selecciona tu nombre en la lista desplegable.');
+          return;
+        }
+        const army = getEntityArmy(chosen);
+        setMyPlayerIdentity(state.roomCode, chosen, army, false);
+        lastNotifiedSeatingKey = '';
+        renderRoundsView();
+        renderPodiumView();
+      });
+
+      document.getElementById('btnOpenRegFromSeatingCard')?.addEventListener('click', () => {
+        openPlayerRegistrationModal(false);
+      });
       return;
     }
 
@@ -2958,7 +3067,12 @@
             <span class="seating-eyebrow">🪖 JUGADOR IDENTIFICADO: ${escapeHtml(myId.name)} ${
         myId.army ? `• 🛡️ ${escapeHtml(myId.army)}` : ''
       }</span>
-            <span class="seating-record-pill">Posición: #${myRank}° • ${myTp} PT • Dif ${myDiff} • ${myVp} PV</span>
+            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+              <span class="seating-record-pill">Posición: #${myRank}° • ${myTp} PT • Dif ${myDiff} • ${myVp} PV</span>
+              <button type="button" class="btn-elven-outline btn-xs" id="btnSwitchSeatingPlayerHero" title="Cambiar de jugador en esta Tablet / Dispositivo">
+                🔄 Cambiar Jugador
+              </button>
+            </div>
           </div>
           <div class="seating-actions-bar" style="border-top:none; padding-top:4px;">
             <span class="helper-caption">
@@ -2981,26 +3095,27 @@
         </div>
       `;
       document.getElementById('btnToggleMyDropHero')?.addEventListener('click', toggleMyDropStatusFlow);
+      document.getElementById('btnSwitchSeatingPlayerHero')?.addEventListener('click', () => {
+        setMyPlayerIdentity(state.roomCode, '', '', true);
+        renderRoundsView();
+      });
       return;
     }
 
     const myMatch = matches[myMatchIdx];
-    const iAmP1 = isPlayerInEntity(myMatch.p1.name, myId.name);
+    const iAmP1 =
+      isPlayerInEntity(myMatch.p1.name, myId.name) ||
+      (state.mode === 'teams' && isPlayerInEntity(myMatch.team1, myId.name));
     const mySide = iAmP1 ? myMatch.p1 : myMatch.p2;
     const oppSide = iAmP1 ? myMatch.p2 : myMatch.p1;
     const myArmy = getEntityArmy(mySide.name) || myId.army;
     const oppArmy = getEntityArmy(oppSide.name);
 
     // Notificación sonora y visual automática cuando el Organizador publica el asiento de la ronda (Seatings Alert)
-    const seatingKey = `${state.roomCode}_R${currentRoundObj.round}_${myMatch.table}_${oppSide.name}`;
+    const seatingKey = `${state.roomCode}_R${currentRoundObj.round}_${myMatch.table}_${mySide.name}_${oppSide.name}`;
     if (lastNotifiedSeatingKey !== seatingKey) {
       lastNotifiedSeatingKey = seatingKey;
-      if (!isAdminMode) {
-        playTimerAlertSound();
-        showToast(
-          `⚔️ ¡Ronda ${currentRoundObj.round} emparejada! Te toca en ${myMatch.table} contra ${oppSide.name}.`
-        );
-      }
+      triggerSeatingAlertNotification(currentRoundObj.round, myMatch.table, mySide.name, oppSide.name);
     }
 
     const hasResult = Boolean(mySide.result && oppSide.result);
@@ -3014,7 +3129,15 @@
       <div class="seating-hero-card">
         <div class="seating-hero-top">
           <span class="seating-eyebrow">🔔 TU ASIENTO EN LA RONDA ${currentRoundObj.round}</span>
-          <span class="seating-record-pill">🏆 Lugar Actual: #${myRank}° • ${myTp} PT • Dif ${myDiff} • ${myVp} PV</span>
+          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+            <span class="seating-record-pill">🏆 Lugar Actual: #${myRank}° • ${myTp} PT • Dif ${myDiff} • ${myVp} PV</span>
+            <button type="button" class="btn-elven-outline btn-xs" id="btnTestSeatingAlertHero" title="Sonar alerta de asiento">
+              🔔 Alerta
+            </button>
+            <button type="button" class="btn-elven-outline btn-xs" id="btnSwitchSeatingPlayerHero" title="Cambiar de jugador en esta Tablet / Dispositivo">
+              🔄 Cambiar Jugador
+            </button>
+          </div>
         </div>
 
         <div class="seating-hero-main">
@@ -3089,6 +3212,13 @@
       openPlayerMatchReportModal(currentRoundObj.round, myMatchIdx);
     });
     document.getElementById('btnToggleMyDropHero')?.addEventListener('click', toggleMyDropStatusFlow);
+    document.getElementById('btnTestSeatingAlertHero')?.addEventListener('click', () => {
+      triggerSeatingAlertNotification(currentRoundObj.round, myMatch.table, mySide.name, oppSide.name);
+    });
+    document.getElementById('btnSwitchSeatingPlayerHero')?.addEventListener('click', () => {
+      setMyPlayerIdentity(state.roomCode, '', '', true);
+      renderRoundsView();
+    });
   }
 
   function openPlayerMatchReportModal(roundNum, mIdx) {
