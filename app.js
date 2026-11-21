@@ -365,7 +365,9 @@
         }
       }
     }
+    s.rounds = s.rounds.filter((x) => x && Number(x.round) >= 1 && Number(x.round) <= s.totalRounds);
     s.rounds.sort((a, b) => Number(a.round) - Number(b.round));
+    s.activeRound = Math.min(Math.max(1, Number(s.activeRound) || 1), s.totalRounds);
     return s;
   }
 
@@ -1626,7 +1628,8 @@
     const res = (result || '').toUpperCase();
     if (!res) return 0;
 
-    const absDiff = Math.abs(Number(vpDiff || 0));
+    const diff = Number(vpDiff || 0);
+    const absDiff = Math.abs(diff);
 
     if (state.scoringSystem === 'classic') {
       if (res === 'V') return 3;
@@ -1637,7 +1640,7 @@
 
     // Escala Extendida (5 / 4 / 2 / 1 / 0)
     if (res === 'V') {
-      return absDiff >= 10 ? 5 : 4;
+      return diff >= 10 ? 5 : 4;
     }
     if (res === 'E') {
       return 2;
@@ -1707,7 +1710,7 @@
       }
       p1.manualTp = false;
       p2.manualTp = false;
-    } else if (triggerSource === 'vp') {
+    } else if (triggerSource === 'vp' || triggerSource === 'forfeit') {
       if (p1.vp > p2.vp) {
         p1.result = 'V';
         p2.result = 'D';
@@ -1876,16 +1879,15 @@
       return item;
     });
 
-    // Ordenamiento multicriterio:
-    // 1. No Abandono (activos primero)
-    // 2. Puntos de Torneo Final DESC
-    // 3. Diferencia de Puntos de Victoria DESC
-    // 4. Puntos de Victoria a Favor DESC
+    // Ordenamiento oficial del Podio (10.1 / 10.2 / 10.3):
+    // 1. Puntos de Torneo Final DESC
+    // 2. Diferencia de Puntos de Victoria DESC
+    // 3. Puntos de Victoria a Favor DESC
     list.sort((a, b) => {
-      if (a.abandoned !== b.abandoned) return a.abandoned ? 1 : -1;
       if (b.finalTp !== a.finalTp) return b.finalTp - a.finalTp;
       if (b.vpDiff !== a.vpDiff) return b.vpDiff - a.vpDiff;
       if (b.vpFavor !== a.vpFavor) return b.vpFavor - a.vpFavor;
+      if (a.abandoned !== b.abandoned) return a.abandoned ? 1 : -1;
       return a.name.localeCompare(b.name);
     });
 
@@ -1916,18 +1918,41 @@
       activeList = prevStandings.filter((s) => !s.abandoned && !isEntityDropped(s.name)).map((s) => s.name);
     }
 
-    if (activeList.length % 2 !== 0) {
-      activeList.push('BYE');
-    }
-
     function havePlayedBefore(a, b) {
-      if (a === 'BYE' || b === 'BYE') return false;
+      if (a === 'BYE' && b === 'BYE') return false;
+      if (a === 'BYE' || b === 'BYE') {
+        const realEntity = a === 'BYE' ? b : a;
+        const rec = varMatrix[realEntity];
+        if (!rec) return false;
+        for (let r = 1; r < roundNum; r++) {
+          if (rec.opponentsByRound[r] === 'BYE') return true;
+        }
+        return false;
+      }
       const rec = varMatrix[a];
       if (!rec) return false;
       for (let r = 1; r < roundNum; r++) {
         if (rec.opponentsByRound[r] === b) return true;
       }
       return false;
+    }
+
+    // Si hay número impar de participantes activos, reservar el BYE para el jugador de menor posición
+    // en la tabla que aún no haya recibido un BYE en rondas previas.
+    let reservedByePair = null;
+    if (activeList.length % 2 !== 0) {
+      let byeIdx = -1;
+      for (let i = activeList.length - 1; i >= 0; i--) {
+        if (!havePlayedBefore(activeList[i], 'BYE')) {
+          byeIdx = i;
+          break;
+        }
+      }
+      if (byeIdx === -1) {
+        byeIdx = activeList.length - 1;
+      }
+      const byePlayer = activeList.splice(byeIdx, 1)[0];
+      reservedByePair = [byePlayer, 'BYE'];
     }
 
     const used = new Array(activeList.length).fill(false);
@@ -1988,6 +2013,10 @@
           pairs.push([activeList[i], activeList[matchedJ]]);
         }
       }
+    }
+
+    if (reservedByePair) {
+      pairs.push(reservedByePair);
     }
 
     const availableTables = [];
@@ -2317,22 +2346,14 @@
   }
 
   function isPlayerAssignedInCurrentMode(playerName) {
-    const lower = String(playerName || '').trim().toLowerCase();
-    if (!lower) return false;
-    if (state.mode === 'individual') {
-      return (state.players || []).some((p) => String(p).trim().toLowerCase() === lower);
-    }
-    if (state.mode === 'pairs') {
-      return (state.players || []).some((pairStr) =>
-        String(pairStr)
-          .split(/\s*[&+/]\s*|\s+y\s+/i)
-          .map((s) => s.trim().toLowerCase())
-          .includes(lower)
-      );
+    const clean = String(playerName || '').trim();
+    if (!clean) return false;
+    if (state.mode === 'individual' || state.mode === 'pairs') {
+      return (state.players || []).some((entityStr) => isPlayerInEntity(entityStr, clean));
     }
     if (state.mode === 'teams') {
       return (state.teams || []).some((t) =>
-        (t.members || []).some((m) => String(m).trim().toLowerCase() === lower)
+        (t.members || []).some((m) => isPlayerInEntity(m, clean))
       );
     }
     return false;
@@ -2505,17 +2526,31 @@
       });
 
       listEl.querySelectorAll('input[data-player-idx]').forEach((inp) => {
-        inp.addEventListener('change', (e) => {
+        inp.addEventListener('change', async (e) => {
           const idx = Number(e.target.dataset.playerIdx);
           const oldName = state.players[idx];
           const newVal = e.target.value.trim();
-          if (newVal) {
-            if (oldName && state.playerArmies && state.playerArmies[oldName] && !state.playerArmies[newVal]) {
-              state.playerArmies[newVal] = state.playerArmies[oldName];
+          if (newVal && oldName !== newVal) {
+            const existingArmy = (oldName && getEntityArmy(oldName)) || '';
+            if (existingArmy) {
+              if (!state.playerArmies || typeof state.playerArmies !== 'object') {
+                state.playerArmies = {};
+              }
+              state.playerArmies[newVal] = existingArmy;
             }
             state.players[idx] = newVal;
+            (state.rounds || []).forEach((rObj) => {
+              (rObj.matches || []).forEach((m) => {
+                if (m.p1 && m.p1.name === oldName) m.p1.name = newVal;
+                if (m.p2 && m.p2.name === oldName) m.p2.name = newVal;
+              });
+            });
+            if (state.mode === 'individual' && oldName) {
+              await submitPlayerRegistrationToCloud(newVal, existingArmy, state.roomCode);
+              await deletePlayerRegistrationFromCloud(oldName, state.roomCode);
+            }
             saveState();
-            renderSidebarStatus();
+            renderAll();
           }
         });
       });
@@ -3545,11 +3580,16 @@
 
     function isSelfVoteTarget(candidateName, voterName) {
       if (!candidateName || !voterName) return true;
-      const cLower = candidateName.toLowerCase();
-      const vLower = voterName.toLowerCase();
-      if (cLower === vLower) return true;
-      const parts = cLower.split(/\s*[&+/]\s*|\s+y\s+/i).map((s) => s.trim());
-      return parts.includes(vLower);
+      if (isPlayerInEntity(candidateName, voterName)) return true;
+      if (state.mode === 'teams') {
+        const teamObj = (state.teams || []).find(
+          (t) => t && String(t.name).toLowerCase() === String(candidateName).toLowerCase()
+        );
+        if (teamObj && (teamObj.members || []).some((m) => isPlayerInEntity(m, voterName))) {
+          return true;
+        }
+      }
+      return false;
     }
 
     const votesMap = state.votes && typeof state.votes === 'object' ? state.votes : {};
@@ -3962,9 +4002,17 @@
           finished: false,
           podiumUpdated: false,
           teamClashes: [],
-          matches: []
+          matches: [],
+          timer: {
+            durationMinutes: 90,
+            remainingMs: 90 * 60 * 1000,
+            endTime: null,
+            running: false
+          }
         });
       }
+      state.rounds = state.rounds.filter((x) => x && Number(x.round) >= 1 && Number(x.round) <= val);
+      state.activeRound = Math.min(Math.max(1, Number(state.activeRound) || 1), val);
       saveState();
       renderAll();
     });
@@ -4199,9 +4247,27 @@
         'Esta acción eliminará todos los jugadores inscritos, los emparejamientos de todas las rondas y los puntajes del Podio. Esta acción no se puede deshacer.',
         '🧹 Sí, Formatear Todo',
         () => {
+          const prevRegKeys = Object.keys(state.registrations || {});
+          const prevVoteKeys = Object.keys(state.votes || {});
+          const dbUrl = getFirebaseDbUrl();
+          const code = String(state.roomCode || '').trim().toUpperCase();
+          if (dbUrl && code) {
+            prevRegKeys.forEach((k) => {
+              fetchWithTimeout(`${dbUrl}/inscripciones_torneos/${code}/${encodeURIComponent(k)}.json`, {
+                method: 'DELETE'
+              }).catch(() => {});
+            });
+            prevVoteKeys.forEach((k) => {
+              fetchWithTimeout(`${dbUrl}/votos_torneos/${code}/${encodeURIComponent(k)}.json`, {
+                method: 'DELETE'
+              }).catch(() => {});
+            });
+          }
+
           state.players = [];
           state.registrations = {};
           state.playerArmies = {};
+          state.droppedPlayers = {};
           state.removedRegistrationKeys = [];
           state.registrationOpen = true;
           state.rounds = [];
@@ -4227,14 +4293,6 @@
           state.votingFairPlayOpen = false;
           state.votes = {};
           state.explicitReset = true;
-          const regUrl = getRoomRegistrationsEndpoint(state.roomCode);
-          if (regUrl) {
-            fetchWithTimeout(regUrl, { method: 'DELETE' }).catch(() => {});
-          }
-          const votesUrl = getRoomVotesEndpoint(state.roomCode);
-          if (votesUrl) {
-            fetchWithTimeout(votesUrl, { method: 'DELETE' }).catch(() => {});
-          }
           saveState();
           delete state.explicitReset;
           renderAll();
@@ -4257,55 +4315,68 @@
         state.rounds.push(rObj);
       }
 
-      if (state.mode === 'teams') {
-        buildIndividualMatchesFromTeamClashes(rObj);
-        showToast(`Mesas de integrantes creadas para la Ronda ${rNum}.`);
-        return;
-      }
+      const executePairRound = () => {
+        if (state.mode === 'teams') {
+          buildIndividualMatchesFromTeamClashes(rObj);
+          showToast(`Mesas de integrantes creadas para la Ronda ${rNum}.`);
+          return;
+        }
 
-      const pairings = generatePairingsForRound(rNum);
-      rObj.matches = pairings.map((pair) => {
-        const m = {
-          table: pair.table,
-          team1: '',
-          team2: '',
-          p1: {
-            name: pair.p1,
-            paint: 's',
-            delay: 'N/A',
-            surrender: false,
-            abandonMatch: false,
-            abandonTournament: false,
-            result: '',
-            tp: 0,
-            vp: 0,
-            manualTp: false
-          },
-          p2: {
-            name: pair.p2,
-            paint: 's',
-            delay: 'N/A',
-            surrender: false,
-            abandonMatch: false,
-            abandonTournament: false,
-            result: '',
-            tp: 0,
-            vp: 0,
-            manualTp: false
-          }
-        };
-        recalculateMatch(m, 'init');
-        return m;
-      });
-      rObj.paired = true;
-      rObj.finished = false;
-      saveState();
-      renderAll();
-      showToast(
-        rNum === 1
-          ? `Ronda 1 emparejada aleatoriamente (${rObj.matches.length} mesas).`
-          : `Ronda ${rNum} emparejada por Sistema Suizo sin repetir rivales ni mesas.`
-      );
+        const pairings = generatePairingsForRound(rNum);
+        rObj.matches = pairings.map((pair) => {
+          const m = {
+            table: pair.table,
+            team1: '',
+            team2: '',
+            p1: {
+              name: pair.p1,
+              paint: 's',
+              delay: 'N/A',
+              surrender: false,
+              abandonMatch: false,
+              abandonTournament: false,
+              result: '',
+              tp: 0,
+              vp: 0,
+              manualTp: false
+            },
+            p2: {
+              name: pair.p2,
+              paint: 's',
+              delay: 'N/A',
+              surrender: false,
+              abandonMatch: false,
+              abandonTournament: false,
+              result: '',
+              tp: 0,
+              vp: 0,
+              manualTp: false
+            }
+          };
+          recalculateMatch(m, 'init');
+          return m;
+        });
+        rObj.paired = true;
+        rObj.finished = false;
+        saveState();
+        renderAll();
+        showToast(
+          rNum === 1
+            ? `Ronda 1 emparejada aleatoriamente (${rObj.matches.length} mesas).`
+            : `Ronda ${rNum} emparejada por Sistema Suizo sin repetir rivales ni mesas.`
+        );
+      };
+
+      if (rObj.matches && rObj.matches.length > 0) {
+        openConfirmModal(
+          `¿Re-emparejar Ronda ${rNum}?`,
+          `Ya existen mesas asignadas en la Ronda ${rNum}. Si vuelves a emparejar se reemplazarán los cruces y resultados actuales de esta ronda.`,
+          '▶ Sí, Re-emparejar',
+          executePairRound
+        );
+      } else {
+        executePairRound();
+      }
     });
 
     // Finalizar Ronda Actual
@@ -4323,19 +4394,39 @@
         return;
       }
 
-      rObj.finished = true;
-      rObj.podiumUpdated = true;
+      const executeFinishRound = () => {
+        rObj.finished = true;
+        rObj.podiumUpdated = true;
+        if (rObj.timer && rObj.timer.running) {
+          rObj.timer.remainingMs = getRoundRemainingMs(rObj);
+          rObj.timer.endTime = null;
+          rObj.timer.running = false;
+        }
 
-      if (rNum < state.totalRounds) {
-        state.activeRound = rNum + 1;
-        saveState();
-        renderAll();
-        showToast(`✓ Ronda ${rNum} finalizada y registrada en el Podio. Avanzando a Ronda ${rNum + 1}.`);
+        if (rNum < state.totalRounds) {
+          state.activeRound = rNum + 1;
+          saveState();
+          renderAll();
+          showToast(`✓ Ronda ${rNum} finalizada y registrada en el Podio. Avanzando a Ronda ${rNum + 1}.`);
+        } else {
+          saveState();
+          switchTab('podium');
+          launchPodiumCelebration();
+          showToast(`🏆 ¡Última ronda finalizada! Celebrando el Podio del torneo.`);
+        }
+      };
+
+      const unscoredMatches = rObj.matches.filter((m) => !m.p1.result || !m.p2.result);
+      if (unscoredMatches.length > 0) {
+        const missingTables = unscoredMatches.map((m) => m.table).join(', ');
+        openConfirmModal(
+          `⚠️ Mesas sin Resultado en Ronda ${rNum}`,
+          `Aún faltan resultados por registrar en: ${missingTables}. ¿Deseas finalizar la Ronda ${rNum} de todas formas?`,
+          '✓ Sí, Finalizar Ronda',
+          executeFinishRound
+        );
       } else {
-        saveState();
-        switchTab('podium');
-        launchPodiumCelebration();
-        showToast(`🏆 ¡Torneo finalizado! Celebrando el Podio oficial.`);
+        executeFinishRound();
       }
     });
 
@@ -4999,16 +5090,20 @@
     const existingVote =
       savedVoterKey && state.votes && state.votes[savedVoterKey] ? state.votes[savedVoterKey] : null;
 
-    // Si el jugador se inscribió individualmente y luego fue puesto en una pareja, encontrar su entidad en candidates
+    // Si el jugador se inscribió individualmente y luego fue puesto en una pareja o equipo, encontrar su entidad en candidates
     const matchedCandidateForMe = myId.name
-      ? candidates.find(
-          (c) =>
-            c.toLowerCase() === myId.name.toLowerCase() ||
-            c
-              .split(/\s*[&+/]\s*|\s+y\s+/i)
-              .map((s) => s.trim().toLowerCase())
-              .includes(myId.name.toLowerCase())
-        )
+      ? candidates.find((c) => {
+          if (isPlayerInEntity(c, myId.name)) return true;
+          if (state.mode === 'teams') {
+            const teamObj = (state.teams || []).find(
+              (t) => t && String(t.name).toLowerCase() === String(c).toLowerCase()
+            );
+            if (teamObj && (teamObj.members || []).some((m) => isPlayerInEntity(m, myId.name))) {
+              return true;
+            }
+          }
+          return false;
+        })
       : '';
 
     const savedVoterName =
