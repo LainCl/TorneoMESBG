@@ -2068,15 +2068,6 @@
   }
 
   function renderSidebarStatus() {
-    const standings = calculateStandings();
-    const activeCount = standings.filter((s) => !s.abandoned).length;
-    const totalCount = standings.length;
-    const completedRounds = state.rounds.filter(
-      (r) => r.finished || (r.matches || []).some((m) => m.p1.result || m.p2.result)
-    ).length;
-
-    document.getElementById('sidebarTournamentName').textContent =
-      (state.tournamentName || 'TORNEO MESBG').toUpperCase();
     const roomCodeEl = document.getElementById('activeRoomCodeDisplay');
     if (roomCodeEl) {
       roomCodeEl.textContent = state.roomCode || '------';
@@ -2085,11 +2076,6 @@
     if (minBadgeEl) {
       minBadgeEl.textContent = state.roomCode || '------';
     }
-    document.getElementById('statActivePlayers').textContent = `${activeCount} / ${totalCount}`;
-    document.getElementById('statRounds').textContent = `${completedRounds} / ${state.totalRounds}`;
-    document.getElementById('statTables').textContent = String(state.totalTables);
-    document.getElementById('statLeader').textContent =
-      standings.length > 0 && completedRounds > 0 ? standings[0].name : 'Sin datos';
 
     const modeNames = {
       individual: 'Duelos Individuales',
@@ -2097,11 +2083,13 @@
       teams: 'Duelos 4vs4'
     };
     const scoreNames = {
-      expanded: 'Expandido',
+      expanded: 'Extendido',
       classic: 'Clásico'
     };
-    document.getElementById('badgeCurrentMode').textContent =
-      `${modeNames[state.mode]} • ${scoreNames[state.scoringSystem]}`;
+    const badgeModeEl = document.getElementById('badgeCurrentMode');
+    if (badgeModeEl) {
+      badgeModeEl.textContent = `${modeNames[state.mode]} • ${scoreNames[state.scoringSystem]}`;
+    }
 
     renderRecentRoomsList();
   }
