@@ -8,8 +8,17 @@
   const OWNED_ROOMS_KEY = 'mesbg_owned_rooms_v1';
   const RECENT_ROOMS_KEY = 'mesbg_recent_rooms_v1';
   const VOTER_IDENTITY_KEY = 'mesbg_voter_identity_v1';
+  const DEVICE_ID_KEY = 'mesbg_device_id_v1';
   const FIREBASE_URL_STORAGE_KEY = 'mesbg_firebase_db_url';
   const ADMIN_SESSION_KEY = 'mesbg_admin_unlocked';
+  const RESERVED_PROTO_KEYS = new Set([
+    '__proto__',
+    'prototype',
+    'constructor',
+    'toString',
+    'valueOf',
+    'hasOwnProperty'
+  ]);
 
   // Estado central de la aplicación
   let state = buildCleanInitialState();
@@ -25,10 +34,36 @@
   const warned15MinByRound = {};
   const warnedExpiredByRound = {};
 
-  function sanitizeFirebaseKey(raw) {
+  function getMyDeviceId() {
+    try {
+      let id = localStorage.getItem(DEVICE_ID_KEY);
+      if (!id || id.length < 8) {
+        id =
+          typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+            ? crypto.randomUUID()
+            : 'dev_' + Math.random().toString(36).slice(2) + '_' + Date.now().toString(36);
+        localStorage.setItem(DEVICE_ID_KEY, id);
+      }
+      return id;
+    } catch (e) {
+      return 'dev_fallback';
+    }
+  }
+
+  function sanitizeTextField(raw, maxLen = 44) {
     return String(raw || '')
+      .replace(/[\u0000-\u001F\u007F<>]/g, '')
       .trim()
-      .replace(/[.#$/[\]\s]+/g, '_');
+      .slice(0, maxLen);
+  }
+
+  function sanitizeFirebaseKey(raw) {
+    const clean = sanitizeTextField(raw, 44).replace(/[.#$/[\]\s]+/g, '_');
+    if (!clean) return '';
+    if (RESERVED_PROTO_KEYS.has(clean) || RESERVED_PROTO_KEYS.has(clean.toLowerCase())) {
+      return `player_${clean}`;
+    }
+    return clean;
   }
 
   function getMyPlayerIdentity(roomCode) {
@@ -681,17 +716,29 @@
 
   async function submitPlayerRegistrationToCloud(playerName, playerArmy, explicitRoomCode) {
     const code = String(explicitRoomCode || state.roomCode || '').trim().toUpperCase();
-    const cleanName = String(playerName || '').trim();
-    const cleanArmy = String(playerArmy || '').trim();
+    const cleanName = sanitizeTextField(playerName, 40);
+    const cleanArmy = sanitizeTextField(playerArmy, 50);
     if (!code || code.length < 4 || !cleanName) return false;
 
     const regKey = sanitizeFirebaseKey(cleanName);
     if (!regKey) return false;
 
+    const myDevId = getMyDeviceId();
+    const existingReg = state.registrations && state.registrations[regKey];
+    if (
+      !isAdminMode &&
+      existingReg &&
+      existingReg.deviceId &&
+      existingReg.deviceId !== myDevId
+    ) {
+      return false;
+    }
+
     const regObj = {
       name: cleanName,
       army: cleanArmy,
-      joinedAt: Date.now()
+      deviceId: existingReg && existingReg.deviceId ? existingReg.deviceId : myDevId,
+      joinedAt: existingReg && existingReg.joinedAt ? existingReg.joinedAt : Date.now()
     };
 
     if (!state.registrations || typeof state.registrations !== 'object') {
@@ -747,7 +794,7 @@
 
   async function deletePlayerRegistrationFromCloud(playerName, explicitRoomCode) {
     const code = String(explicitRoomCode || state.roomCode || '').trim().toUpperCase();
-    const cleanName = String(playerName || '').trim();
+    const cleanName = sanitizeTextField(playerName, 40);
     const regKey = sanitizeFirebaseKey(cleanName);
     if (!code || !regKey) return;
 
@@ -795,14 +842,23 @@
       const nextRegistrations = {};
 
       Object.entries(cleanRegs).forEach(([key, item]) => {
-        if (!item || typeof item !== 'object' || removedSet.has(key)) return;
-        const pName = String(item.name || '').trim();
-        const pArmy = String(item.army || '').trim();
+        if (!item || typeof item !== 'object' || removedSet.has(key) || RESERVED_PROTO_KEYS.has(key)) return;
+        const pName = sanitizeTextField(item.name, 40);
+        const pArmy = sanitizeTextField(item.army, 50);
         if (!pName) return;
+
+        // Si las inscripciones están cerradas, no aceptar altas nuevas externas que no estuvieran ya en la sala
+        const wasAlreadyKnown =
+          (state.registrations && state.registrations[key]) ||
+          (state.players || []).some((p) => String(p).toLowerCase() === pName.toLowerCase());
+        if (state.registrationOpen === false && !wasAlreadyKnown) {
+          return;
+        }
 
         nextRegistrations[key] = {
           name: pName,
           army: pArmy,
+          deviceId: item.deviceId ? String(item.deviceId).slice(0, 64) : '',
           joinedAt: Number(item.joinedAt) || Date.now()
         };
         if (pArmy) {
@@ -2764,24 +2820,41 @@
     });
     const lethalGeneral = lethalCandidates[0] || null;
 
-    // 2. Votación de Mejor Pintura y Premio Fair Play
-    const paintCounts = {};
-    const fairPlayCounts = {};
+    // 2. Votación de Mejor Pintura y Premio Fair Play (con validación de participantes reales y anti-autovoto)
+    const paintCounts = Object.create(null);
+    const fairPlayCounts = Object.create(null);
     let totalPaintVotes = 0;
     let totalFairPlayVotes = 0;
+
+    const validCandidatesSet = new Set(list.map((row) => String(row.name).trim()));
+    const validVotersSet = new Set([
+      ...validCandidatesSet,
+      ...getRegisteredPlayersList().map((r) => String(r.name).trim())
+    ]);
+
+    function isSelfVoteTarget(candidateName, voterName) {
+      if (!candidateName || !voterName) return true;
+      const cLower = candidateName.toLowerCase();
+      const vLower = voterName.toLowerCase();
+      if (cLower === vLower) return true;
+      const parts = cLower.split(/\s*[&+/]\s*|\s+y\s+/i).map((s) => s.trim());
+      return parts.includes(vLower);
+    }
 
     const votesMap = state.votes && typeof state.votes === 'object' ? state.votes : {};
     Object.values(votesMap).forEach((v) => {
       if (!v || typeof v !== 'object') return;
-      const voterName = String(v.voter || '').trim();
-      const rawPaint = String(v.paintVote || v.paint || '').trim();
-      const rawFair = String(v.fairPlayVote || v.fairPlay || '').trim();
+      const voterName = sanitizeTextField(v.voter, 44);
+      const rawPaint = sanitizeTextField(v.paintVote || v.paint, 44);
+      const rawFair = sanitizeTextField(v.fairPlayVote || v.fairPlay, 44);
 
-      if (rawPaint && rawPaint !== voterName) {
+      if (!voterName || (validVotersSet.size > 0 && !validVotersSet.has(voterName))) return;
+
+      if (rawPaint && validCandidatesSet.has(rawPaint) && !isSelfVoteTarget(rawPaint, voterName)) {
         paintCounts[rawPaint] = (paintCounts[rawPaint] || 0) + 1;
         totalPaintVotes++;
       }
-      if (rawFair && rawFair !== voterName) {
+      if (rawFair && validCandidatesSet.has(rawFair) && !isSelfVoteTarget(rawFair, voterName)) {
         fairPlayCounts[rawFair] = (fairPlayCounts[rawFair] || 0) + 1;
         totalFairPlayVotes++;
       }
@@ -3114,7 +3187,8 @@
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
   // =========================================================================
