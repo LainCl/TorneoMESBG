@@ -764,6 +764,135 @@
     }
   }
 
+  let isPullingState = false;
+  let isPullingRegs = false;
+  let pendingPullRegs = false;
+  let isPullingVotes = false;
+  let pendingPullVotes = false;
+  let regSseDebounceTimer = null;
+  let voteSseDebounceTimer = null;
+
+  async function ensureExistingPlayerRegLoaded(code, regKey) {
+    if (state.registrations && state.registrations[regKey]) {
+      return state.registrations[regKey];
+    }
+    const dbUrl = getFirebaseDbUrl();
+    if (!dbUrl || !code || !regKey) return {};
+    try {
+      const res = await fetchWithTimeout(
+        `${dbUrl}/inscripciones_torneos/${code}/${encodeURIComponent(regKey)}.json`,
+        {},
+        5000
+      );
+      if (res.ok) {
+        const remoteItem = await res.json();
+        if (remoteItem && typeof remoteItem === 'object' && !Array.isArray(remoteItem)) {
+          if (!state.registrations || typeof state.registrations !== 'object') {
+            state.registrations = {};
+          }
+          state.registrations[regKey] = remoteItem;
+          return remoteItem;
+        }
+      }
+    } catch (e) {
+      // Ignorar si aún no existe en la nube
+    }
+    return (state.registrations && state.registrations[regKey]) || {};
+  }
+
+  function applyRegistrationsOverlayToState(targetState, registrationsMap) {
+    if (!targetState || !registrationsMap || typeof registrationsMap !== 'object') return false;
+    let changed = false;
+
+    if (!targetState.playerArmies || typeof targetState.playerArmies !== 'object') {
+      targetState.playerArmies = {};
+    }
+    if (!targetState.droppedPlayers || typeof targetState.droppedPlayers !== 'object') {
+      targetState.droppedPlayers = {};
+    }
+
+    const allIncomingReports = [];
+    Object.values(registrationsMap).forEach((item) => {
+      if (!item || typeof item !== 'object' || !item.name) return;
+      const pName = sanitizeTextField(item.name, 40);
+      const pArmy = sanitizeTextField(item.army, 50);
+      if (!pName) return;
+
+      if (pArmy && targetState.playerArmies[pName] !== pArmy) {
+        targetState.playerArmies[pName] = pArmy;
+        changed = true;
+      }
+
+      const isDropped = !!item.dropped;
+      if (!!targetState.droppedPlayers[pName] !== isDropped) {
+        targetState.droppedPlayers[pName] = isDropped;
+        changed = true;
+      }
+
+      if (item.matchReports && typeof item.matchReports === 'object' && !Array.isArray(item.matchReports)) {
+        Object.values(item.matchReports).forEach((rep) => {
+          if (rep && typeof rep === 'object' && (Number(rep.reportedAt) > 0 || Number(rep.reportSeq) > 0)) {
+            allIncomingReports.push({ ...rep, reporterVerifiedName: pName });
+          }
+        });
+      }
+    });
+
+    if (!targetState.tournamentFinished && allIncomingReports.length > 0) {
+      allIncomingReports.sort((a, b) => {
+        const seqDiff = Number(a.reportSeq || 0) - Number(b.reportSeq || 0);
+        if (seqDiff !== 0) return seqDiff;
+        return Number(a.reportedAt || 0) - Number(b.reportedAt || 0);
+      });
+
+      allIncomingReports.forEach((rep) => {
+        const rObj = (targetState.rounds || []).find((r) => Number(r.round) === Number(rep.round));
+        if (!rObj || rObj.finished || !Array.isArray(rObj.matches)) return;
+
+        const targetMatch = rObj.matches.find(
+          (m, idx) =>
+            (rep.p1Name &&
+              rep.p2Name &&
+              String(m.p1?.name).toLowerCase() === String(rep.p1Name).toLowerCase() &&
+              String(m.p2?.name).toLowerCase() === String(rep.p2Name).toLowerCase()) ||
+            (typeof rep.matchIdx === 'number' && idx === rep.matchIdx && String(m.table) === String(rep.table))
+        );
+
+        if (!targetMatch) return;
+        if (!isPlayerInMatch(targetMatch, rep.reporterVerifiedName)) return;
+
+        const repSeq = Number(rep.reportSeq || 0);
+        const currentSeq = Number(targetMatch.reportSeq || 0);
+        const repTime = Number(rep.reportedAt || 0);
+        const currentMatchTime = Number(targetMatch.lastAppliedReportAt || 0);
+        const repId = String(rep.reportId || `${rep.reporterVerifiedName}_${repSeq}_${repTime}`);
+
+        const isNewerBySeq = repSeq > 0 && repSeq > currentSeq;
+        const isNewerByTime = repSeq === currentSeq && repTime > currentMatchTime;
+
+        if ((isNewerBySeq || isNewerByTime) && targetMatch.lastAppliedReportId !== repId) {
+          targetMatch.p1.vp = Math.max(0, Math.min(100, Number(rep.p1Vp) || 0));
+          targetMatch.p2.vp = Math.max(0, Math.min(100, Number(rep.p2Vp) || 0));
+          targetMatch.p1.surrender = !!rep.p1Surrender;
+          targetMatch.p2.surrender = !!rep.p2Surrender;
+          targetMatch.p1.manualTp = false;
+          targetMatch.p2.manualTp = false;
+          recalculateMatch(
+            targetMatch,
+            targetMatch.p1.surrender || targetMatch.p2.surrender ? 'forfeit' : 'vp'
+          );
+          targetMatch.reportedBy = rep.reporterVerifiedName;
+          targetMatch.lastAppliedReportAt = Math.max(repTime, currentMatchTime);
+          targetMatch.reportSeq = Math.max(repSeq, currentSeq + 1);
+          targetMatch.lastAppliedReportId = repId;
+          changed = true;
+        }
+      });
+    }
+
+    return changed;
+  }
+
   async function submitPlayerRegistrationToCloud(playerName, playerArmy, explicitRoomCode) {
     if (state && state.tournamentFinished) return false;
     const code = String(explicitRoomCode || state.roomCode || '').trim().toUpperCase();
@@ -775,10 +904,16 @@
     if (!regKey) return false;
 
     const myDevId = getMyDeviceId();
-    const existingReg = state.registrations && state.registrations[regKey];
+    const existingReg = await ensureExistingPlayerRegLoaded(code, regKey);
+    const hasExistingRecord = Boolean(existingReg && existingReg.name);
+
+    if (!isAdminMode && state.registrationOpen === false && !hasExistingRecord) {
+      return false;
+    }
+
     if (
       !isAdminMode &&
-      existingReg &&
+      hasExistingRecord &&
       existingReg.deviceId &&
       existingReg.deviceId !== myDevId
     ) {
@@ -865,7 +1000,7 @@
       state.droppedPlayers = {};
     }
 
-    const existingReg = state.registrations[regKey] || {};
+    const existingReg = await ensureExistingPlayerRegLoaded(code, regKey);
     const regObj = {
       name: cleanName,
       army: existingReg.army || getEntityArmy(cleanName) || '',
@@ -916,6 +1051,8 @@
     if (!isAdminMode && !isPlayerInMatch(match, reporterName)) return false;
 
     const now = Date.now();
+    const nextSeq = (Number(match.reportSeq) || 0) + 1;
+    const reportId = `${reporterName}_${nextSeq}_${now}`;
     const cleanP1Vp = Math.max(0, Math.min(100, Number(p1Vp) || 0));
     const cleanP2Vp = Math.max(0, Math.min(100, Number(p2Vp) || 0));
 
@@ -928,6 +1065,8 @@
     recalculateMatch(match, match.p1.surrender || match.p2.surrender ? 'forfeit' : 'vp');
     match.reportedBy = reporterName;
     match.lastAppliedReportAt = now;
+    match.reportSeq = nextSeq;
+    match.lastAppliedReportId = reportId;
 
     if (isAdminMode) {
       saveState();
@@ -938,7 +1077,7 @@
     if (!state.registrations || typeof state.registrations !== 'object') {
       state.registrations = {};
     }
-    const existingReg = state.registrations[regKey] || {};
+    const existingReg = await ensureExistingPlayerRegLoaded(code, regKey);
     const matchReports =
       existingReg.matchReports && typeof existingReg.matchReports === 'object'
         ? { ...existingReg.matchReports }
@@ -956,7 +1095,9 @@
       p1Surrender: !!p1Surrender,
       p2Surrender: !!p2Surrender,
       reportedBy: reporterName,
-      reportedAt: now
+      reportedAt: now,
+      reportSeq: nextSeq,
+      reportId
     };
 
     const regObj = {
@@ -1025,150 +1166,104 @@
     const regEndpoint = getRoomRegistrationsEndpoint(code);
     if (!regEndpoint || !code) return false;
 
+    if (isPullingRegs) {
+      pendingPullRegs = true;
+      return false;
+    }
+
+    isPullingRegs = true;
+    let anyChanged = false;
     try {
-      const res = await fetchWithTimeout(regEndpoint);
-      if (!res.ok) return false;
-      const remoteRegs = await res.json();
-      if (code !== state.roomCode) return false;
+      do {
+        pendingPullRegs = false;
+        const res = await fetchWithTimeout(regEndpoint);
+        if (!res.ok) break;
+        const remoteRegs = await res.json();
+        if (code !== state.roomCode) break;
 
-      const cleanRegs =
-        remoteRegs && typeof remoteRegs === 'object' && !Array.isArray(remoteRegs) ? remoteRegs : {};
-      const removedSet = new Set(Array.isArray(state.removedRegistrationKeys) ? state.removedRegistrationKeys : []);
+        const cleanRegs =
+          remoteRegs && typeof remoteRegs === 'object' && !Array.isArray(remoteRegs) ? remoteRegs : {};
+        const removedSet = new Set(Array.isArray(state.removedRegistrationKeys) ? state.removedRegistrationKeys : []);
 
-      let rosterChanged = false;
-      if (!state.playerArmies || typeof state.playerArmies !== 'object') {
-        state.playerArmies = {};
-      }
-      if (!state.droppedPlayers || typeof state.droppedPlayers !== 'object') {
-        state.droppedPlayers = {};
-      }
-
-      const prevRegsJson = JSON.stringify(state.registrations || {});
-      const nextRegistrations = {};
-      const allIncomingReports = [];
-
-      Object.entries(cleanRegs).forEach(([key, item]) => {
-        if (!item || typeof item !== 'object' || removedSet.has(key) || RESERVED_PROTO_KEYS.has(key)) return;
-        const pName = sanitizeTextField(item.name, 40);
-        const pArmy = sanitizeTextField(item.army, 50);
-        if (!pName) return;
-
-        // Si las inscripciones están cerradas, no aceptar altas nuevas externas que no estuvieran ya en la sala
-        const wasAlreadyKnown =
-          (state.registrations && state.registrations[key]) ||
-          (state.players || []).some((p) => isPlayerInEntity(p, pName));
-        if (state.registrationOpen === false && !wasAlreadyKnown) {
-          return;
+        let rosterChanged = false;
+        if (!state.playerArmies || typeof state.playerArmies !== 'object') {
+          state.playerArmies = {};
+        }
+        if (!state.droppedPlayers || typeof state.droppedPlayers !== 'object') {
+          state.droppedPlayers = {};
         }
 
-        const isDropped = !!item.dropped;
-        const prevDropped = !!state.droppedPlayers[pName];
-        if (prevDropped !== isDropped) {
-          state.droppedPlayers[pName] = isDropped;
-          rosterChanged = true;
-        }
+        const prevRegsJson = JSON.stringify(state.registrations || {});
+        const nextRegistrations = {};
 
-        const itemReports =
-          item.matchReports && typeof item.matchReports === 'object' && !Array.isArray(item.matchReports)
-            ? item.matchReports
-            : {};
+        Object.entries(cleanRegs).forEach(([key, item]) => {
+          if (!item || typeof item !== 'object' || removedSet.has(key) || RESERVED_PROTO_KEYS.has(key)) return;
+          const pName = sanitizeTextField(item.name, 40);
+          const pArmy = sanitizeTextField(item.army, 50);
+          if (!pName) return;
 
-        Object.values(itemReports).forEach((rep) => {
-          if (rep && typeof rep === 'object' && Number(rep.reportedAt) > 0) {
-            allIncomingReports.push({ ...rep, reporterVerifiedName: pName });
-          }
-        });
+          const itemReports =
+            item.matchReports && typeof item.matchReports === 'object' && !Array.isArray(item.matchReports)
+              ? item.matchReports
+              : {};
 
-        nextRegistrations[key] = {
-          name: pName,
-          army: pArmy,
-          deviceId: item.deviceId ? String(item.deviceId).slice(0, 64) : '',
-          joinedAt: Number(item.joinedAt) || Date.now(),
-          dropped: isDropped,
-          droppedAtRound: item.droppedAtRound || null,
-          matchReports: itemReports
-        };
-        if (pArmy) {
-          state.playerArmies[pName] = pArmy;
-        }
+          nextRegistrations[key] = {
+            name: pName,
+            army: pArmy,
+            deviceId: item.deviceId ? String(item.deviceId).slice(0, 64) : '',
+            joinedAt: Number(item.joinedAt) || Date.now(),
+            dropped: !!item.dropped,
+            droppedAtRound: item.droppedAtRound || null,
+            matchReports: itemReports
+          };
 
-        // En modo Individual, si la inscripción está abierta, incorporar automáticamente al jugador a la lista
-        if (
-          state.mode === 'individual' &&
-          state.registrationOpen !== false &&
-          !state.players.some((p) => String(p).toLowerCase() === pName.toLowerCase())
-        ) {
-          state.players.push(pName);
-          state.totalTables = Math.max(state.totalTables, Math.ceil(state.players.length / 2));
-          rosterChanged = true;
-        }
-      });
-
-      // Aplicar reportes de resultados enviados por los jugadores desde sus mesas (ordenados cronológicamente)
-      if (!state.tournamentFinished && allIncomingReports.length > 0) {
-        allIncomingReports.sort((a, b) => Number(a.reportedAt) - Number(b.reportedAt));
-        allIncomingReports.forEach((rep) => {
-          const rObj = (state.rounds || []).find((r) => Number(r.round) === Number(rep.round));
-          if (!rObj || rObj.finished || !Array.isArray(rObj.matches)) return;
-
-          const targetMatch = rObj.matches.find(
-            (m, idx) =>
-              (rep.p1Name &&
-                rep.p2Name &&
-                String(m.p1?.name).toLowerCase() === String(rep.p1Name).toLowerCase() &&
-                String(m.p2?.name).toLowerCase() === String(rep.p2Name).toLowerCase()) ||
-              (typeof rep.matchIdx === 'number' && idx === rep.matchIdx && String(m.table) === String(rep.table))
-          );
-
-          if (!targetMatch) return;
-          if (!isPlayerInMatch(targetMatch, rep.reporterVerifiedName)) return;
-
-          const repTime = Number(rep.reportedAt || 0);
-          const currentMatchTime = Number(targetMatch.lastAppliedReportAt || 0);
-          if (repTime > currentMatchTime) {
-            targetMatch.p1.vp = Math.max(0, Math.min(100, Number(rep.p1Vp) || 0));
-            targetMatch.p2.vp = Math.max(0, Math.min(100, Number(rep.p2Vp) || 0));
-            targetMatch.p1.surrender = !!rep.p1Surrender;
-            targetMatch.p2.surrender = !!rep.p2Surrender;
-            targetMatch.p1.manualTp = false;
-            targetMatch.p2.manualTp = false;
-            recalculateMatch(
-              targetMatch,
-              targetMatch.p1.surrender || targetMatch.p2.surrender ? 'forfeit' : 'vp'
-            );
-            targetMatch.reportedBy = rep.reporterVerifiedName;
-            targetMatch.lastAppliedReportAt = repTime;
+          // En modo Individual, si la inscripción está abierta, incorporar automáticamente al jugador a la lista
+          if (
+            state.mode === 'individual' &&
+            state.registrationOpen !== false &&
+            !state.players.some((p) => String(p).toLowerCase() === pName.toLowerCase())
+          ) {
+            state.players.push(pName);
+            state.totalTables = Math.max(state.totalTables, Math.ceil(state.players.length / 2));
             rosterChanged = true;
           }
         });
-      }
 
-      state.registrations = nextRegistrations;
-      const nextRegsJson = JSON.stringify(state.registrations);
-      const changed = prevRegsJson !== nextRegsJson || rosterChanged;
+        const overlayChanged = applyRegistrationsOverlayToState(state, nextRegistrations);
+        if (overlayChanged) {
+          rosterChanged = true;
+        }
 
-      if (changed) {
-        if (isAdminMode && rosterChanged) {
-          saveState();
-        } else {
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-          saveRoomToLocalRegistry(state);
-        }
-        if (!skipRender) {
-          renderSidebarStatus();
-          if (!isUserTypingInElement('view-setup')) {
-            renderSetupView();
+        state.registrations = nextRegistrations;
+        const nextRegsJson = JSON.stringify(state.registrations);
+        const changed = prevRegsJson !== nextRegsJson || rosterChanged;
+
+        if (changed) {
+          anyChanged = true;
+          if (isAdminMode && rosterChanged) {
+            saveState();
+          } else {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+            saveRoomToLocalRegistry(state);
           }
-          if (!isUserTypingInElement('roundMatchesContainer')) {
-            renderRoundsView();
+          if (!skipRender) {
+            renderSidebarStatus();
+            if (!isUserTypingInElement('view-setup')) {
+              renderSetupView();
+            }
+            if (!isUserTypingInElement('roundMatchesContainer')) {
+              renderRoundsView();
+            }
+            renderPodiumView();
           }
-          renderPodiumView();
         }
-      }
-      updatePlayerIdentityPillUI();
-      return changed;
+        updatePlayerIdentityPillUI();
+      } while (pendingPullRegs);
+      return anyChanged;
     } catch (e) {
       return false;
+    } finally {
+      isPullingRegs = false;
     }
   }
 
@@ -1205,30 +1300,42 @@
     const votesEndpoint = getRoomVotesEndpoint(code);
     if (!votesEndpoint || !code) return false;
 
-    try {
-      const res = await fetchWithTimeout(votesEndpoint);
-      if (!res.ok) return false;
-      const remoteVotes = await res.json();
-      if (code !== state.roomCode) return false;
-
-      const cleanVotes =
-        remoteVotes && typeof remoteVotes === 'object' && !Array.isArray(remoteVotes) ? remoteVotes : {};
-
-      if (JSON.stringify(state.votes || {}) !== JSON.stringify(cleanVotes)) {
-        state.votes = cleanVotes;
-        if (!skipRender) {
-          renderSpecialAwardsCards();
-        }
-        return true;
-      }
+    if (isPullingVotes) {
+      pendingPullVotes = true;
       return false;
+    }
+
+    isPullingVotes = true;
+    let anyChanged = false;
+    try {
+      do {
+        pendingPullVotes = false;
+        const res = await fetchWithTimeout(votesEndpoint);
+        if (!res.ok) break;
+        const remoteVotes = await res.json();
+        if (code !== state.roomCode) break;
+
+        const cleanVotes =
+          remoteVotes && typeof remoteVotes === 'object' && !Array.isArray(remoteVotes) ? remoteVotes : {};
+
+        if (JSON.stringify(state.votes || {}) !== JSON.stringify(cleanVotes)) {
+          state.votes = cleanVotes;
+          anyChanged = true;
+          if (!skipRender) {
+            renderSpecialAwardsCards();
+          }
+        }
+      } while (pendingPullVotes);
+      return anyChanged;
     } catch (e) {
       return false;
+    } finally {
+      isPullingVotes = false;
     }
   }
 
   async function pullStateFromCloud() {
-    if (isPushingToCloud) return false;
+    if (isPushingToCloud || isPullingState) return false;
 
     const currentCode = state.roomCode;
     const endpoint = getRoomCloudEndpoint(currentCode);
@@ -1237,6 +1344,7 @@
       return false;
     }
 
+    isPullingState = true;
     try {
       const res = await fetchWithTimeout(endpoint);
       if (!res.ok) {
@@ -1255,6 +1363,7 @@
         cleanRemote.votes = preservedVotes;
         cleanRemote.registrations = preservedRegs;
         cleanRemote.playerArmies = preservedArmies;
+        applyRegistrationsOverlayToState(cleanRemote, preservedRegs);
 
         const localTime = Number(state.updatedAt || 0);
         const remoteTime = Number(cleanRemote.updatedAt || 0);
@@ -1325,6 +1434,8 @@
       console.warn('Error en pullStateFromCloud:', err);
       updateLiveSyncBadge('⚠️ SIN CONEXIÓN', false);
       return false;
+    } finally {
+      isPullingState = false;
     }
   }
 
@@ -1438,6 +1549,7 @@
       cleanRemote.votes = preservedVotes;
       cleanRemote.registrations = preservedRegs;
       cleanRemote.playerArmies = preservedArmies;
+      applyRegistrationsOverlayToState(cleanRemote, preservedRegs);
 
       const remoteTime = Number(cleanRemote.updatedAt || 0);
       const localTime = Number(state.updatedAt || 0);
@@ -1529,7 +1641,12 @@
     if (votesEndpoint) {
       try {
         const vSse = new EventSource(votesEndpoint);
-        const onVoteEvent = () => pullVotesFromCloud(state.roomCode);
+        const onVoteEvent = () => {
+          if (voteSseDebounceTimer) clearTimeout(voteSseDebounceTimer);
+          voteSseDebounceTimer = setTimeout(() => {
+            pullVotesFromCloud(state.roomCode);
+          }, 220);
+        };
         vSse.addEventListener('put', onVoteEvent);
         vSse.addEventListener('patch', onVoteEvent);
         vSse.onerror = () => scheduleSseRecovery(vSse);
@@ -1542,7 +1659,12 @@
     if (regsEndpoint) {
       try {
         const rSse = new EventSource(regsEndpoint);
-        const onRegEvent = () => pullRegistrationsFromCloud(state.roomCode);
+        const onRegEvent = () => {
+          if (regSseDebounceTimer) clearTimeout(regSseDebounceTimer);
+          regSseDebounceTimer = setTimeout(() => {
+            pullRegistrationsFromCloud(state.roomCode);
+          }, 220);
+        };
         rSse.addEventListener('put', onRegEvent);
         rSse.addEventListener('patch', onRegEvent);
         rSse.onerror = () => scheduleSseRecovery(rSse);
@@ -3410,6 +3532,8 @@
 
         recalculateMatch(match, 'result');
         match.lastAppliedReportAt = Date.now();
+        match.reportSeq = (Number(match.reportSeq) || 0) + 1;
+        match.lastAppliedReportId = `admin_${match.reportSeq}_${match.lastAppliedReportAt}`;
         saveState();
         renderRoundsView();
         renderSidebarStatus();
@@ -3443,6 +3567,8 @@
         }
 
         match.lastAppliedReportAt = Date.now();
+        match.reportSeq = (Number(match.reportSeq) || 0) + 1;
+        match.lastAppliedReportId = `admin_${match.reportSeq}_${match.lastAppliedReportAt}`;
         saveState();
         renderRoundsView();
         renderSidebarStatus();
@@ -4880,6 +5006,9 @@
     // Reconexión inmediata cuando el dispositivo recupera conexión o vuelve a primer plano (celular/pestaña)
     window.addEventListener('online', () => {
       startCloudRealtimeSync();
+    });
+    window.addEventListener('offline', () => {
+      updateLiveSyncBadge('⚠️ SIN CONEXIÓN', false);
     });
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') {
