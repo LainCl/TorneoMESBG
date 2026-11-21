@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@700;900&family=Cinzel:wght@500;600;700;800&family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=20261121_v15" />
+  <link rel="stylesheet" href="styles.css?v=20261121_v16" />
 </head>
 <body>
   <!-- Fondo atmosférico Rivendel nocturno -->
@@ -104,8 +104,55 @@
     </div>
 
     <div class="top-session-row">
-      <span class="live-sync-badge" id="liveSyncBadge" title="Código del torneo activo">⚪ ------</span>
-      <button type="button" class="ig-link-pill player-identity-pill" id="btnPlayerIdentityPill" title="Inscribirme o cambiar mi identidad de jugador en esta sala">
+      <div class="aux-room-menu-wrapper" id="auxRoomMenuWrapper">
+        <button type="button" class="ig-link-pill aux-room-trigger-btn" id="btnToggleRoomAuxMenu" aria-expanded="false" title="Abrir menú auxiliar de Código de Torneo, cambiar de sala o ver torneos recientes">
+          <span class="live-sync-badge" id="liveSyncBadge">⚪ ------</span>
+          <span class="aux-room-trigger-label">🔑 Código de Torneo ▾</span>
+        </button>
+
+        <!-- Menú Auxiliar Flotante: Código de Torneo y Salas Recientes -->
+        <div class="CompanionRoomCard aux-room-popover hidden" id="companionRoomCard">
+          <div class="companion-top-row">
+            <div class="companion-title-inline">
+              <span class="companion-label">CÓDIGO DE TORNEO</span>
+              <span class="companion-minimized-code hidden" id="minimizedRoomCodeBadge">------</span>
+            </div>
+            <div class="companion-code-actions">
+              <button type="button" class="companion-mini-btn" id="btnCopyRoomCode" title="Copiar código e invitación del torneo">
+                📋 Copiar Link
+              </button>
+              <button type="button" class="companion-mini-btn" id="btnNewRoomCode" title="Crear un nuevo torneo con un ID diferente y quedar como Organizador">
+                ➕ Nuevo ID
+              </button>
+              <button type="button" class="companion-mini-btn companion-collapse-btn" id="btnCloseRoomAuxMenu" title="Cerrar menú auxiliar">
+                ✕
+              </button>
+            </div>
+          </div>
+
+          <div class="companion-collapsible-body" id="companionCollapsibleBody">
+            <div class="companion-code-display" id="activeRoomCodeDisplay" title="Comparte este código con los jugadores">
+              ------
+            </div>
+
+            <div class="companion-join-box">
+              <span class="companion-join-label">¿Buscas otro torneo? Ingresa su ID:</span>
+              <div class="companion-join-row">
+                <input type="text" id="inputJoinRoomCode" maxlength="8" placeholder="Ej: M8K4R2" autocomplete="off" />
+                <button type="button" class="btn-gold-cta btn-sm" id="btnJoinRoomCode">Entrar</button>
+              </div>
+            </div>
+
+            <!-- Lista de Mis Torneos Recientes -->
+            <div class="companion-recent-box" id="recentRoomsSection">
+              <span class="companion-join-label">Mis Torneos Recientes:</span>
+              <div class="recent-rooms-list" id="recentRoomsList"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <button type="button" class="ig-link-pill player-identity-pill" id="btnPlayerIdentityPill" title="Inscribirme o ver mi identidad de jugador en esta sala">
         🪖 Inscribirme
       </button>
       <button type="button" class="ig-link-pill admin-toggle-pill" id="btnToggleAdminMode" title="Cambiar entre Jugador y Organizador">
@@ -116,7 +163,7 @@
 
   <!-- Layout Principal -->
   <div class="app-layout">
-    <!-- Columna Izquierda: Hero & Estado del Torneo -->
+    <!-- Columna Izquierda: Hero & Emblemas -->
     <aside class="lore-Column">
       <div class="moon-crest">
         <img src="assets/logo-deazul.png" alt="DeAzul Boardgames" class="deazul-logo" />
@@ -141,47 +188,6 @@
         </div>
 
         <p class="hero-subtitle">Comunidad MESBG Chile</p>
-      </div>
-
-      <!-- Tarjeta de Sala Estilo Companion (Código de Torneo) -->
-      <div class="CompanionRoomCard" id="companionRoomCard">
-        <div class="companion-top-row">
-          <div class="companion-title-inline">
-            <span class="companion-label">CÓDIGO DE TORNEO</span>
-            <span class="companion-minimized-code hidden" id="minimizedRoomCodeBadge">------</span>
-          </div>
-          <div class="companion-code-actions">
-            <button type="button" class="companion-mini-btn" id="btnCopyRoomCode" title="Copiar código e invitación del torneo">
-              📋 Copiar Link
-            </button>
-            <button type="button" class="companion-mini-btn" id="btnNewRoomCode" title="Crear un nuevo torneo con un ID diferente y quedar como Organizador">
-              ➕ Nuevo ID
-            </button>
-            <button type="button" class="companion-mini-btn companion-collapse-btn" id="btnToggleCompanionMinimize" title="Minimizar / Expandir panel de Código de Torneo" aria-expanded="true">
-              —
-            </button>
-          </div>
-        </div>
-
-        <div class="companion-collapsible-body" id="companionCollapsibleBody">
-          <div class="companion-code-display" id="activeRoomCodeDisplay" title="Comparte este código con los jugadores">
-            ------
-          </div>
-
-          <div class="companion-join-box">
-            <span class="companion-join-label">¿Buscas otro torneo? Ingresa su ID:</span>
-            <div class="companion-join-row">
-              <input type="text" id="inputJoinRoomCode" maxlength="8" placeholder="Ej: M8K4R2" autocomplete="off" />
-              <button type="button" class="btn-gold-cta btn-sm" id="btnJoinRoomCode">Entrar</button>
-            </div>
-          </div>
-
-          <!-- Lista de Mis Torneos Recientes -->
-          <div class="companion-recent-box" id="recentRoomsSection">
-            <span class="companion-join-label">Mis Torneos Recientes:</span>
-            <div class="recent-rooms-list" id="recentRoomsList"></div>
-          </div>
-        </div>
       </div>
     </aside>
 
@@ -706,7 +712,7 @@
   <!-- Toast de Notificación -->
   <div id="toastContainer" class="toast-container"></div>
 
-  <script src="cloudConfig.js?v=20261121_v15"></script>
-  <script src="app.js?v=20261121_v15"></script>
+  <script src="cloudConfig.js?v=20261121_v16"></script>
+  <script src="app.js?v=20261121_v16"></script>
 </body>
 </html>

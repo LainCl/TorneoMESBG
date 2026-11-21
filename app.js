@@ -2136,6 +2136,8 @@
     listEl.querySelectorAll('button[data-recent-code]').forEach((btn) => {
       btn.addEventListener('click', (e) => {
         const code = e.currentTarget.dataset.recentCode;
+        document.getElementById('companionRoomCard')?.classList.add('hidden');
+        document.getElementById('btnToggleRoomAuxMenu')?.classList.remove('is-open');
         if (code && code !== state.roomCode) {
           joinTournamentByCode(code);
         }
@@ -4692,36 +4694,50 @@
       document.getElementById(id)?.addEventListener('click', openSpecialVotingModal);
     });
 
-    // Minimizar / Expandir Tarjetas de Foto 2 (Código de Torneo y Resumen) + Modal
-    const btnToggleCompanionMinimize = document.getElementById('btnToggleCompanionMinimize');
-    if (btnToggleCompanionMinimize) {
-      btnToggleCompanionMinimize.addEventListener('click', () => {
-        const card = document.getElementById('companionRoomCard');
-        const body = document.getElementById('companionCollapsibleBody');
-        const minBadge = document.getElementById('minimizedRoomCodeBadge');
-        if (!card || !body) return;
-        const willMinimize = !card.classList.contains('is-minimized');
-        card.classList.toggle('is-minimized', willMinimize);
-        body.classList.toggle('hidden', willMinimize);
-        if (minBadge) minBadge.classList.toggle('hidden', !willMinimize);
-        btnToggleCompanionMinimize.textContent = willMinimize ? '+' : '—';
-        btnToggleCompanionMinimize.setAttribute('aria-expanded', String(!willMinimize));
+    // Menú Auxiliar Flotante de Código de Torneo (en barra superior)
+    const btnToggleRoomAuxMenu = document.getElementById('btnToggleRoomAuxMenu');
+    const btnCloseRoomAuxMenu = document.getElementById('btnCloseRoomAuxMenu');
+    const auxRoomMenuWrapper = document.getElementById('auxRoomMenuWrapper');
+    const companionRoomCard = document.getElementById('companionRoomCard');
+
+    const closeRoomAuxMenu = () => {
+      if (companionRoomCard) companionRoomCard.classList.add('hidden');
+      if (btnToggleRoomAuxMenu) {
+        btnToggleRoomAuxMenu.classList.remove('is-open');
+        btnToggleRoomAuxMenu.setAttribute('aria-expanded', 'false');
+      }
+    };
+
+    if (btnToggleRoomAuxMenu && companionRoomCard) {
+      btnToggleRoomAuxMenu.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const willOpen = companionRoomCard.classList.contains('hidden');
+        companionRoomCard.classList.toggle('hidden', !willOpen);
+        btnToggleRoomAuxMenu.classList.toggle('is-open', willOpen);
+        btnToggleRoomAuxMenu.setAttribute('aria-expanded', String(willOpen));
+        if (willOpen) {
+          renderRecentRoomsList();
+        }
       });
     }
 
-    const btnToggleStatusMinimize = document.getElementById('btnToggleStatusMinimize');
-    if (btnToggleStatusMinimize) {
-      btnToggleStatusMinimize.addEventListener('click', () => {
-        const card = document.getElementById('quickStatusCard');
-        const grid = document.getElementById('statusCollapsibleGrid');
-        if (!card || !grid) return;
-        const willMinimize = !card.classList.contains('is-minimized');
-        card.classList.toggle('is-minimized', willMinimize);
-        grid.classList.toggle('hidden', willMinimize);
-        btnToggleStatusMinimize.textContent = willMinimize ? '+' : '—';
-        btnToggleStatusMinimize.setAttribute('aria-expanded', String(!willMinimize));
+    if (btnCloseRoomAuxMenu) {
+      btnCloseRoomAuxMenu.addEventListener('click', (e) => {
+        e.stopPropagation();
+        closeRoomAuxMenu();
       });
     }
+
+    document.addEventListener('click', (e) => {
+      if (
+        companionRoomCard &&
+        !companionRoomCard.classList.contains('hidden') &&
+        auxRoomMenuWrapper &&
+        !auxRoomMenuWrapper.contains(e.target)
+      ) {
+        closeRoomAuxMenu();
+      }
+    });
 
     const btnMinimizeModal = document.getElementById('btnMinimizeModal');
     if (btnMinimizeModal) {
