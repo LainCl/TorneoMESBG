@@ -1604,14 +1604,23 @@
   }
 
   /**
-   * Puntos de Escenario por defecto ante abandono/rendición del rival
+   * Puntos de Escenario por defecto ante abandono/rendición del rival o BYE
    */
   function getDefaultScenarioVp() {
+    if (state.scoringSystem === 'expanded') {
+      return 10;
+    }
     return state.mode === 'individual' ? 6 : 12;
   }
 
   /**
    * Cálculo de Puntos de Torneo según Resultado (V/E/D), Diferencia de PV y Rendición
+   * 10.1 Sistema de Puntos Extendido:
+   * - Victoria Absoluta: +5 puntos (puntuar al menos 10 VPs más que tu oponente, Dif >= 10)
+   * - Victoria Ajustada: +4 puntos (cualquier otra victoria, Dif < 10)
+   * - Empate: +2 puntos
+   * - Derrota Ajustada: +1 punto (perder sin que la diferencia de VPs sea 10 o más, Dif < 10)
+   * - Derrota Absoluta: 0 puntos (perder si la diferencia de VPs es 10 o más, Dif >= 10)
    */
   function calcAutoTournamentPoints(result, vpDiff, surrendered) {
     const res = (result || '').toUpperCase();
@@ -1626,16 +1635,16 @@
       return 0;
     }
 
-    // Escala Expandida (5 / 4 / 2 / 1 / 0 / -1)
+    // Escala Extendida (5 / 4 / 2 / 1 / 0)
     if (res === 'V') {
-      return absDiff >= 6 ? 5 : 4;
+      return absDiff >= 10 ? 5 : 4;
     }
     if (res === 'E') {
       return 2;
     }
     if (res === 'D') {
-      if (surrendered) return -1;
-      return absDiff < 6 ? 1 : 0;
+      if (surrendered) return 0;
+      return absDiff < 10 ? 1 : 0;
     }
     return 0;
   }
@@ -1834,9 +1843,12 @@
 
           const paintPen = calcPaintPenalty(me.paint);
           const delayPen = calcDelayPenalty(me.delay);
-          const tp = Number(me.tp || 0);
           const vp = Number(me.vp || 0);
           const diff = vp - Number(opp.vp || 0);
+          if (me.result && !me.manualTp) {
+            me.tp = calcAutoTournamentPoints(me.result, diff, me.surrender);
+          }
+          const tp = Number(me.tp || 0);
 
           rStat.played = true;
           rStat.result = state.mode === 'teams' ? `${rStat.result}${me.result || ''}` : me.result || '';
@@ -4514,20 +4526,26 @@
       openModal(
         'Reglas de Puntuación y Emparejamiento',
         `
-          <h4>1. Puntos de Torneo</h4>
+          <h4>10.1 Puntos de Torneo (Sistema Extendido)</h4>
           <ul>
-            <li><strong>Escala Expandida (5 / 4 / 2 / 1 / 0 / -1):</strong> Victoria por Masacre (Dif. PV ≥ 6) = <strong>5 pts</strong>; Victoria Marginal (Dif. PV &lt; 6) = <strong>4 pts</strong>; Empate = <strong>2 pts</strong>; Derrota Marginal (Dif. PV &lt; 6) = <strong>1 pt</strong>; Derrota por Masacre (Dif. PV ≥ 6) = <strong>0 pts</strong>; Derrota por Rendición = <strong>-1 pt</strong>.</li>
-            <li><strong>Escala Clásica (3 / 1 / 0):</strong> Victoria = <strong>3 pts</strong>; Empate = <strong>1 pt</strong>; Derrota = <strong>0 pts</strong>.</li>
+            <li><strong>Victoria Absoluta (+5 puntos):</strong> Puntuar al menos 10 VPs más que tu oponente (<code>Dif. PV ≥ 10</code>).</li>
+            <li><strong>Victoria Ajustada (+4 puntos):</strong> Cualquier otra victoria (<code>Dif. PV de 1 a 9</code>).</li>
+            <li><strong>Empate (+2 puntos):</strong> Igualdad de Puntos de Victoria.</li>
+            <li><strong>Derrota Ajustada (+1 punto):</strong> Perder sin que la diferencia de VPs sea 10 o más (<code>Dif. PV de 1 a 9</code>).</li>
+            <li><strong>Derrota Absoluta (0 puntos):</strong> Perder si la diferencia de VPs es 10 o más (<code>Dif. PV ≥ 10</code>).</li>
+            <li><em>Escala Clásica alternativa (3 / 1 / 0):</em> Victoria = 3 pts; Empate = 1 pt; Derrota = 0 pts.</li>
           </ul>
-          <h4>2. Penalizaciones y Rendición / Abandono</h4>
+          <h4>10.2 Diferencia de Puntos de Victoria (-20 a +20 por ronda)</h4>
           <ul>
-            <li><strong>Pintura:</strong> Si no cumple criterio (<code>No</code>), resta <strong>-1 pt</strong> en torneo individual/parejas o <strong>-2 pts</strong> en torneo por equipos (4vs4).</li>
-            <li><strong>Atraso:</strong> Entre <code>10 - 20 min</code> o <code>&gt; 20 min</code> penaliza con <strong>-1 pt</strong>. Si supera los 20 minutos, exige marcar <em>Abandono de Partida</em>.</li>
-            <li><strong>Abandono o Rendición:</strong> Otorga Victoria automática al oponente con <strong>6 PV</strong> (individual) o <strong>12 PV</strong> (parejas/equipos) y 0 PV al infractor.</li>
+            <li>Se calcula como la diferencia entre los Puntos de Victoria logrados por el jugador y los Puntos de Victoria logrados por el oponente en el escenario correspondiente de la ronda.</li>
           </ul>
-          <h4>3. Ordenamiento del Podio y Emparejamiento Suizo</h4>
+          <h4>10.3 Puntos de Victoria a Favor (0 a 20 por ronda)</h4>
           <ul>
-            <li><strong>Criterios de Desempate:</strong> 1° No haber abandonado el torneo • 2° Puntos de Torneo Final • 3° Diferencia de PV • 4° PV a Favor.</li>
+            <li>Son los Puntos de Victoria obtenidos por el jugador en la ronda correspondiente (entre 0 y 20 puntos cada ronda).</li>
+          </ul>
+          <h4>Orden de Importancia y Desempate</h4>
+          <ul>
+            <li><strong>1° Puntos de Torneo</strong> → <strong>2° Diferencia de Puntos de Victoria</strong> → <strong>3° Puntos de Victoria a Favor</strong>.</li>
             <li><strong>Emparejamiento Suizo:</strong> Ronda 1 al azar; Ronda 2 en adelante por orden de Podio verificando que los rivales no se hayan enfrentado antes y que no repitan mesa.</li>
           </ul>
         `
