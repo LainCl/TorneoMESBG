@@ -572,7 +572,11 @@
   function updateLiveSyncBadge(statusText, isOnline) {
     const badge = document.getElementById('liveSyncBadge');
     if (!badge) return;
-    badge.textContent = statusText;
+    if (isOnline && state && state.tournamentFinished && statusText.startsWith('🟢')) {
+      badge.textContent = `🔒 ${state.roomCode} • CERRADO`;
+    } else {
+      badge.textContent = statusText;
+    }
     badge.classList.toggle('online', !!isOnline);
   }
 
@@ -584,6 +588,9 @@
       const armySuffix = myId.army ? ` • ${myId.army}` : '';
       pill.textContent = `🪖 ${myId.name}${armySuffix}`;
       pill.classList.add('is-identified');
+    } else if (state && state.tournamentFinished) {
+      pill.textContent = '🔒 Torneo Cerrado';
+      pill.classList.remove('is-identified');
     } else if (myId.isSpectator) {
       pill.textContent = '👁️ Espectador (Inscribirme)';
       pill.classList.remove('is-identified');
@@ -596,6 +603,7 @@
   function maybePromptPlayerRegistration() {
     updatePlayerIdentityPillUI();
     if (isAdminMode) return;
+    if (state && state.tournamentFinished) return;
     const code = String(state.roomCode || '').trim().toUpperCase();
     if (!code || code.length < 4) return;
 
@@ -715,6 +723,7 @@
   }
 
   async function submitPlayerRegistrationToCloud(playerName, playerArmy, explicitRoomCode) {
+    if (state && state.tournamentFinished) return false;
     const code = String(explicitRoomCode || state.roomCode || '').trim().toUpperCase();
     const cleanName = sanitizeTextField(playerName, 40);
     const cleanArmy = sanitizeTextField(playerArmy, 50);
@@ -907,6 +916,7 @@
   }
 
   async function submitPlayerVoteToCloud(voterKey, voteObj, explicitRoomCode) {
+    if (state && state.tournamentFinished) return false;
     const code = String(explicitRoomCode || state.roomCode || '').trim().toUpperCase();
     if (!code || code.length < 4) return false;
 
@@ -3020,6 +3030,11 @@
     if (finishedBanner) {
       finishedBanner.classList.toggle('hidden', !state.tournamentFinished);
     }
+    const finishedBannerRounds = document.getElementById('tournamentFinishedBannerRounds');
+    if (finishedBannerRounds) {
+      finishedBannerRounds.classList.toggle('hidden', !state.tournamentFinished);
+    }
+    document.body.classList.toggle('tournament-closed-mode', !!state.tournamentFinished);
 
     updateVotingControlUI();
     renderSpecialAwardsCards(standings);
@@ -4014,7 +4029,7 @@
       });
     }
 
-    // Finalizar Torneo Oficialmente
+    // Finalizar Torneo Oficialmente y Reabrir Torneo
     const btnFinalizeFromRounds = document.getElementById('btnFinalizeTournamentFromRounds');
     if (btnFinalizeFromRounds) {
       btnFinalizeFromRounds.addEventListener('click', finalizeTournamentFlow);
@@ -4023,6 +4038,8 @@
     if (btnFinalizePodium) {
       btnFinalizePodium.addEventListener('click', finalizeTournamentFlow);
     }
+    document.getElementById('btnReopenTournamentRounds')?.addEventListener('click', reopenTournamentFlow);
+    document.getElementById('btnReopenTournamentPodium')?.addEventListener('click', reopenTournamentFlow);
 
     // Sincronización instantánea entre pestañas del mismo navegador
     window.addEventListener('storage', (e) => {
@@ -4436,9 +4453,9 @@
     }
 
     openConfirmModal(
-      '🏁 Finalizar Torneo y Generar Podio Oficial',
-      '¿Confirmas que la última ronda ha concluido y deseas proclamar el Podio Oficial junto con los Reconocimientos Especiales (Mejor Pintura, General Más Letal y Fair Play)?',
-      '🏁 Sí, Finalizar Torneo',
+      '🏁 Finalizar Torneo y Cerrar ID Oficialmente',
+      `¿Confirmas que deseas finalizar el torneo y cerrar el ID "${state.roomCode}"? Se cerrarán definitivamente las inscripciones, las votaciones de Pintura/Fair Play y la edición de puntajes, quedando el Podio Oficial sellado en modo consulta.`,
+      '🏁 Sí, Finalizar y Cerrar ID',
       () => {
         state.rounds.forEach((r) => {
           r.finished = true;
@@ -4449,11 +4466,31 @@
           }
         });
         state.tournamentFinished = true;
+        state.registrationOpen = false;
+        state.votingPaintOpen = false;
+        state.votingFairPlayOpen = false;
         saveState();
         switchTab('podium');
         renderAll();
+        updateLiveSyncBadge(`🟢 ${state.roomCode}`, true);
         launchPodiumCelebration();
-        showToast('🏆 ¡Torneo finalizado oficialmente! Podio y reconocimientos proclamados.');
+        showToast(`🔒 ¡Torneo ${state.roomCode} finalizado y cerrado oficialmente!`);
+      }
+    );
+  }
+
+  function reopenTournamentFlow() {
+    if (!isAdminMode) return;
+    openConfirmModal(
+      '🔓 Reabrir ID del Torneo',
+      `¿Deseas reabrir el ID "${state.roomCode}" para realizar alguna corrección en puntajes o votaciones?`,
+      '🔓 Sí, Reabrir Torneo',
+      () => {
+        state.tournamentFinished = false;
+        saveState();
+        renderAll();
+        updateLiveSyncBadge(`🟢 ${state.roomCode}`, true);
+        showToast(`🔓 Torneo ${state.roomCode} reabierto para edición del Organizador.`);
       }
     );
   }

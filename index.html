@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@700;900&family=Cinzel:wght@500;600;700;800&family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=20261121_v8" />
+  <link rel="stylesheet" href="styles.css?v=20261121_v9" />
 </head>
 <body>
   <!-- Fondo atmosférico Rivendel nocturno -->
@@ -481,38 +481,50 @@
               <div class="round-pills-bar" id="roundPillsContainer"></div>
             </div>
 
+            <!-- Banner de Torneo Finalizado / ID Cerrado (Rondas) -->
+            <div class="tournament-finished-banner hidden" id="tournamentFinishedBannerRounds">
+              <div class="finished-banner-content">
+                <span>🔒 <strong>TORNEO FINALIZADO (ID CERRADO)</strong> — Inscripciones, votaciones y puntajes sellados oficialmente.</span>
+                <button type="button" class="btn-elven-outline btn-sm admin-only-block" id="btnReopenTournamentRounds">
+                  🔓 Reabrir ID
+                </button>
+              </div>
+            </div>
+
             <!-- Temporizador / Reloj de Ronda Sincronizado en Vivo -->
             <div class="round-timer-panel" id="roundTimerPanel">
-              <div class="timer-display-group">
-                <div class="timer-clock-box" id="roundTimerClockBox">
-                  <span class="timer-label">TIEMPO DE RONDA</span>
-                  <strong class="timer-digits" id="roundTimerDisplay">01:30:00</strong>
+              <div class="round-timer-top-row">
+                <div class="timer-display-group">
+                  <div class="timer-clock-box" id="roundTimerClockBox">
+                    <span class="timer-label">TIEMPO DE RONDA</span>
+                    <strong class="timer-digits" id="roundTimerDisplay">01:30:00</strong>
+                  </div>
+                  <span class="timer-status-pill" id="roundTimerStatusBadge">EN PAUSA</span>
                 </div>
-                <span class="timer-status-pill" id="roundTimerStatusBadge">EN PAUSA</span>
+
+                <!-- Controles del Reloj (Solo Organizador) -->
+                <div class="timer-controls-group admin-only-block">
+                  <div class="timer-duration-input">
+                    <label for="inputTimerMinutes">Min:</label>
+                    <input type="number" id="inputTimerMinutes" min="1" max="360" value="90" title="Duración de la ronda en minutos" />
+                    <button type="button" class="btn-elven-outline btn-sm" id="btnSetTimerMinutes">Fijar</button>
+                  </div>
+                  <button type="button" class="btn-gold-cta btn-sm" id="btnToggleTimerRun">▶ Iniciar</button>
+                  <button type="button" class="btn-elven-outline btn-sm" id="btnResetTimer" title="Reiniciar reloj de esta ronda">↺ Reiniciar</button>
+                </div>
               </div>
 
-              <!-- Controles del Reloj (Solo Organizador) -->
-              <div class="timer-controls-group admin-only-block">
-                <div class="timer-duration-input">
-                  <label for="inputTimerMinutes">Min:</label>
-                  <input type="number" id="inputTimerMinutes" min="1" max="360" value="90" title="Duración de la ronda en minutos" />
-                  <button type="button" class="btn-elven-outline btn-sm" id="btnSetTimerMinutes">Fijar</button>
+              <!-- Sub-barra de Control de Votaciones Especiales (Solo Organizador) -->
+              <div class="round-voting-admin-row admin-only-block">
+                <span class="voting-subbar-label">🗳️ VOTACIONES ESPECIALES:</span>
+                <div class="voting-subbar-buttons">
+                  <button type="button" class="btn-elven-outline btn-sm" id="btnLaunchPaintVotingRounds" title="Habilitar o cerrar la votación de Mejor Pintura para los jugadores">
+                    🎨 Lanzar Votación Pintura
+                  </button>
+                  <button type="button" class="btn-elven-outline btn-sm" id="btnLaunchFairPlayVotingRounds" title="Habilitar o cerrar la votación de Fair Play para los jugadores">
+                    🤝 Lanzar Votación Fair Play
+                  </button>
                 </div>
-                <button type="button" class="btn-gold-cta btn-sm" id="btnToggleTimerRun">▶ Iniciar</button>
-                <button type="button" class="btn-elven-outline btn-sm" id="btnResetTimer" title="Reiniciar reloj de esta ronda">↺ Reiniciar</button>
-              </div>
-
-              <!-- Controles de Votación (Organizador lanza la votación; Jugadores la ven cuando está activa) -->
-              <div class="timer-player-actions">
-                <button type="button" class="btn-elven-outline btn-sm admin-only-block" id="btnLaunchPaintVotingRounds" title="Habilitar o cerrar la votación de Mejor Pintura para los jugadores">
-                  🎨 Lanzar Votación Pintura
-                </button>
-                <button type="button" class="btn-elven-outline btn-sm admin-only-block" id="btnLaunchFairPlayVotingRounds" title="Habilitar o cerrar la votación de Fair Play para los jugadores">
-                  🤝 Lanzar Votación Fair Play
-                </button>
-                <button type="button" class="btn-gold-cta btn-sm hidden" id="btnOpenVotingFromRounds">
-                  🗳️ Votar Ahora
-                </button>
               </div>
             </div>
 
@@ -529,29 +541,36 @@
 
             <!-- Buscador Rápido de Mesa / Jugador -->
             <div class="player-search-row">
-              <input type="text" id="inputFilterPlayerMatch" placeholder="🔍 Buscar jugador, equipo o número de mesa en esta ronda..." />
+              <input type="text" id="inputFilterPlayerMatch" placeholder="🔍 Buscar jugador, ejército, equipo o número de mesa en esta ronda..." />
             </div>
 
             <!-- Barra de Controles de la Ronda (Solo Organizador) -->
             <div class="round-Macro-toolbar admin-only-block">
-              <button class="btn-gold-cta btn-compact" id="btnPairCurrentRound">
-                <span>▶</span> EMPAREJAR RONDAS
-              </button>
-              <button class="btn-finish-round btn-compact" id="btnFinishCurrentRound">
-                <span>✓</span> FINALIZAR RONDA
-              </button>
-              <button class="btn-dark-leaderboard btn-compact" id="btnUpdatePodiumFromRound">
-                <span>🏆</span> ACTUALIZAR PODIO
-              </button>
-              <button class="btn-elven-outline btn-compact" id="btnAddManualMatch" title="Añadir mesa adicional o editar cruces">
-                + Mesa Manual
-              </button>
-              <button class="btn-elven-outline btn-compact" id="btnClearCurrentRound" title="Limpiar los datos de esta ronda">
-                Limpiar Ronda
-              </button>
-              <button class="btn-gold-cta btn-compact hidden" id="btnFinalizeTournamentFromRounds" title="Cerrar oficialmente el torneo y mostrar el Podio Final">
-                🏁 FINALIZAR TORNEO
-              </button>
+              <div class="toolbar-primary-grid">
+                <button class="btn-gold-cta btn-compact" id="btnPairCurrentRound">
+                  <span>▶</span> EMPAREJAR RONDAS
+                </button>
+                <button class="btn-finish-round btn-compact" id="btnFinishCurrentRound">
+                  <span>✓</span> FINALIZAR RONDA
+                </button>
+                <button class="btn-dark-leaderboard btn-compact" id="btnUpdatePodiumFromRound">
+                  <span>🏆</span> ACTUALIZAR PODIO
+                </button>
+                <button class="btn-gold-cta btn-compact hidden" id="btnFinalizeTournamentFromRounds" title="Cerrar oficialmente el ID del torneo y proclamar el Podio Final">
+                  🏁 FINALIZAR TORNEO
+                </button>
+              </div>
+              <div class="toolbar-secondary-row">
+                <span class="toolbar-sec-label">Edición de ronda:</span>
+                <div class="toolbar-sec-actions">
+                  <button class="btn-elven-outline btn-sm" id="btnAddManualMatch" title="Añadir mesa adicional o editar cruces">
+                    + Mesa Manual
+                  </button>
+                  <button class="btn-elven-outline btn-sm" id="btnClearCurrentRound" title="Limpiar los datos de esta ronda">
+                    🧹 Limpiar Ronda
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -582,7 +601,12 @@
         <section class="tab-view" id="view-podium">
           <!-- Banner de Torneo Finalizado -->
           <div class="tournament-finished-banner hidden" id="tournamentFinishedBanner">
-            <span>🏆 <strong>TORNEO OFICIALMENTE FINALIZADO</strong> — Resultados definitivos y cuadro de honor cerrados.</span>
+            <div class="finished-banner-content">
+              <span>🔒 <strong>TORNEO OFICIALMENTE FINALIZADO (ID CERRADO)</strong> — Inscripciones, votaciones y resultados definitivos sellados.</span>
+              <button type="button" class="btn-elven-outline btn-sm admin-only-block" id="btnReopenTournamentPodium">
+                🔓 Reabrir ID
+              </button>
+            </div>
           </div>
 
           <!-- Tarjetas Destacadas de Podio (1° Oro, 2° Plata, 3° Bronce, Último Activo) -->
@@ -710,7 +734,7 @@
   <!-- Toast de Notificación -->
   <div id="toastContainer" class="toast-container"></div>
 
-  <script src="cloudConfig.js?v=20261121_v8"></script>
-  <script src="app.js?v=20261121_v8"></script>
+  <script src="cloudConfig.js?v=20261121_v9"></script>
+  <script src="app.js?v=20261121_v9"></script>
 </body>
 </html>
